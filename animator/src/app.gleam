@@ -4,8 +4,8 @@ import builtins
 import drawing
 import editor
 import errors
+import gleam/list
 import gleam/result
-import gleam/string
 import lustre
 import lustre/attribute as attr
 import lustre/effect.{type Effect}
@@ -13,6 +13,7 @@ import lustre/element.{type Element}
 import lustre/element/html
 import lustre/event
 import parser
+import render
 import shape.{type Path}
 
 //
@@ -83,15 +84,24 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
     ToggleCode -> #(Model(..model, code_open: !model.code_open), effect.none())
 
-    // After each keystroke in the editor, evaluate user code and report errors.
+    // After each keystroke in the editor, evaluate user code and animate
+    // its paths (or surface a temporary error message until an error UI is chosen).
     SetCode(text) ->
       case run_source(10, text) {
-        // Parsed and evaluated: show the result.
-        Ok(paths) -> #(
-          Model(..model, output: string.inspect(paths), source: text),
-          effect.none(),
-        )
-        // Broken (parse or evaluation): show the error.
+        Ok(paths) -> {
+          let rendered =
+            list.map(paths, fn(path) { render.render_path(path, "#ffffff") })
+          #(
+            Model(..model, output: "", source: text),
+            // Replace the drawing and restart the clock so the new paths
+            // animate from the beginning at normal speed.
+            effect.from(fn(_) {
+              render.set_drawing(rendered)
+              render.reset_clock()
+            }),
+          )
+        }
+        // Broken (parse or evaluation): inform the user (temporary text).
         Error(msg) -> #(
           Model(..model, output: msg, source: text),
           effect.none(),
@@ -123,7 +133,12 @@ pub fn view(model: Model) -> Element(Msg) {
 fn view_anim(model: Model) -> Element(Msg) {
   html.div([attr.class("canvas-area")], [
     view_reveal_code(model),
-    html.pre([attr.class("output")], [html.text(model.output)]),
+    html.canvas([attr.id("animation-canvas"), attr.class("canvas")]),
+    // Temporary error text until a dedicated error UI is chosen.
+    case model.output {
+      "" -> element.none()
+      msg -> html.pre([attr.class("output")], [html.text(msg)])
+    },
   ])
 }
 
