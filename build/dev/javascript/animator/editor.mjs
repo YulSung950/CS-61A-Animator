@@ -178,20 +178,73 @@ function view_reference_panel() {
 }
 
 /**
+ * Native library menu: one option per saved drawing, plus create-new (`value=""`).
+ * 
+ * @ignore
+ */
+function view_drawing_select(drawings, current, on_select) {
+  let named = $list.map(
+    drawings,
+    (entry) => {
+      let name = entry[0];
+      return $html.option(
+        listPrepend(
+          $attr.value(name),
+          listPrepend($attr.selected(name === current), $List$Empty$const),
+        ),
+        name,
+      );
+    },
+  );
+  let create_new = $html.option(
+    listPrepend($attr.value(""), $List$Empty$const),
+    "+ New drawing…",
+  );
+  return $html.select(
+    listPrepend(
+      $attr.attribute("data-test-id", "drawing-select"),
+      listPrepend(
+        $attr.class$("drawing-select"),
+        listPrepend(
+          $attr.value(current),
+          listPrepend(
+            $attr.attribute("title", "Saved drawings"),
+            listPrepend($event.on_change(on_select), $List$Empty$const),
+          ),
+        ),
+      ),
+    ),
+    $list.append(named, listPrepend(create_new, $List$Empty$const)),
+  );
+}
+
+/**
  * The code panel that sits beside the drawing: the live editor and a reference
  * of the built-in inputs and functions. The latest code that runs is rendered
  * continuously, so there is no explicit apply step.
+ *
+ * `drawings` / `current` / `on_select` drive the library `<select>` in the
+ * header (option 1: code-header drawing-select).
  */
-export function view_panel(on_collapse) {
+export function view_panel(on_collapse, drawings, current, on_select) {
   return $html.div(
     listPrepend($attr.class$("code-panel"), $List$Empty$const),
     listPrepend(
       $html.div(
         listPrepend($attr.class$("code-header"), $List$Empty$const),
         listPrepend(
-          $html.span(
-            listPrepend($attr.class$("code-title"), $List$Empty$const),
-            listPrepend($html.text("draw code"), $List$Empty$const),
+          $html.div(
+            listPrepend($attr.class$("code-header-left"), $List$Empty$const),
+            listPrepend(
+              $html.span(
+                listPrepend($attr.class$("code-title"), $List$Empty$const),
+                listPrepend($html.text("draw code"), $List$Empty$const),
+              ),
+              listPrepend(
+                view_drawing_select(drawings, current, on_select),
+                $List$Empty$const,
+              ),
+            ),
           ),
           listPrepend(
             $html.button(

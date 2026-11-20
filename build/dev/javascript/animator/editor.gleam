@@ -28,10 +28,21 @@ pub fn mount(text: String, on_change: fn(String) -> msg) -> Effect(msg) {
 /// The code panel that sits beside the drawing: the live editor and a reference
 /// of the built-in inputs and functions. The latest code that runs is rendered
 /// continuously, so there is no explicit apply step.
-pub fn view_panel(on_collapse: msg) -> Element(msg) {
+///
+/// `drawings` / `current` / `on_select` drive the library `<select>` in the
+/// header (option 1: code-header drawing-select).
+pub fn view_panel(
+  on_collapse: msg,
+  drawings: List(#(String, String)),
+  current: String,
+  on_select: fn(String) -> msg,
+) -> Element(msg) {
   html.div([attr.class("code-panel")], [
     html.div([attr.class("code-header")], [
-      html.span([attr.class("code-title")], [html.text("draw code")]),
+      html.div([attr.class("code-header-left")], [
+        html.span([attr.class("code-title")], [html.text("draw code")]),
+        view_drawing_select(drawings, current, on_select),
+      ]),
       html.button(
         [
           attr.class("icon-btn"),
@@ -55,6 +66,30 @@ pub fn view_panel(on_collapse: msg) -> Element(msg) {
     ]),
     view_reference_panel(),
   ])
+}
+
+/// Native library menu: one option per saved drawing, plus create-new (`value=""`).
+fn view_drawing_select(
+  drawings: List(#(String, String)),
+  current: String,
+  on_select: fn(String) -> msg,
+) -> Element(msg) {
+  let named =
+    list.map(drawings, fn(entry) {
+      let #(name, _) = entry
+      html.option([attr.value(name), attr.selected(name == current)], name)
+    })
+  let create_new = html.option([attr.value("")], "+ New drawing…")
+  html.select(
+    [
+      attr.attribute("data-test-id", "drawing-select"),
+      attr.class("drawing-select"),
+      attr.value(current),
+      attr.attribute("title", "Saved drawings"),
+      event.on_change(on_select),
+    ],
+    list.append(named, [create_new]),
+  )
 }
 
 // ── Built-in reference ──────────────────────────────────────────────────────
