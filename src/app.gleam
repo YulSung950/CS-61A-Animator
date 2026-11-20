@@ -4,6 +4,8 @@ import builtins
 import drawing
 import editor
 import errors
+import gleam/float
+import gleam/int
 import gleam/list
 import gleam/result
 import lustre
@@ -34,6 +36,15 @@ pub const include_video_in_gallery = False
 const default_code =
   "fn draw(shape_slider: Int) -> List(Path) {\n  [Path(Line(Point(0, 0), Point(100, 100)), 0, 10, 2)]\n}\n"
 
+/// Default shape-slider position (reference range [0, 100]).
+const default_shape_slider = 10
+
+/// Default playback rate: 1.0× forward (matches canvas.mjs startup).
+const default_speed = 1.0
+
+/// Speed track spans this many× normal on each side of pause (0).
+const speed_max = 2.0
+
 // ── Model ──────────────────────────────────────────────────────────────────────
 
 pub type Model {
@@ -45,6 +56,10 @@ pub type Model {
     // Latest parse/eval error message, or "" when the last run succeeded /
     // the overlay was dismissed. Shown as a canvas overlay toast.
     error: String,
+    // Value passed into draw as shape_slider.
+    shape_slider: Int,
+    // Playback rate passed to render.set_speed (negative = reverse).
+    speed: Float,
   )
 }
 
@@ -56,6 +71,10 @@ pub type Msg {
 
   // Clear the canvas error overlay (Esc, dismiss button, or backdrop click).
   DismissError
+
+  // Control strip
+  SetShapeSlider(Int)
+  SetSpeed(Float)
 }
 
 @external(javascript, "./app_ffi.mjs", "listenEscape")
@@ -65,7 +84,13 @@ fn listen_escape(on_escape: fn() -> Nil) -> Nil
 
 pub fn init(_flags: Nil) -> #(Model, Effect(Msg)) {
   #(
-    Model(source: "", code_open: True, error: ""),
+    Model(
+      source: "",
+      code_open: True,
+      error: "",
+      shape_slider: default_shape_slider,
+      speed: default_speed,
+    ),
     // Effects that happen automatically at the start go here.
     effect.batch([
       editor.mount(default_code, SetCode),
@@ -88,6 +113,18 @@ fn run_source(shape_slider: Int, source: String) -> Result(List(Path), String) {
   }
 }
 
+fn paint_paths(paths: List(Path), reset: Bool) -> Effect(Msg) {
+  let rendered =
+    list.map(paths, fn(path) { render.render_path(path, "#ffffff") })
+  effect.from(fn(_) {
+    render.set_drawing(rendered)
+    case reset {
+      True -> render.reset_clock()
+      False -> Nil
+    }
+  })
+}
+
 // ── Update ─────────────────────────────────────────────────────────────────────
 
 pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
@@ -99,20 +136,13 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     // After each keystroke in the editor, evaluate user code and animate
     // its paths, or show the canvas error overlay on failure.
     SetCode(text) ->
-      case run_source(10, text) {
-        Ok(paths) -> {
-          let rendered =
-            list.map(paths, fn(path) { render.render_path(path, "#ffffff") })
-          #(
-            Model(..model, error: "", source: text),
-            // Replace the drawing and restart the clock so the new paths
-            // animate from the beginning at normal speed.
-            effect.from(fn(_) {
-              render.set_drawing(rendered)
-              render.reset_clock()
-            }),
-          )
-        }
+      case run_source(model.shape_slider, text) {
+        Ok(paths) -> #(
+          Model(..model, error: "", source: text),
+          // Replace the drawing and restart the clock so the new paths
+          // animate from the beginning at the current speed.
+          paint_paths(paths, True),
+        )
         // Keep the previous drawing; do not call set_drawing. Overlay shows
         // the error over the dimmed canvas until the next success or dismiss.
         Error(msg) -> #(
@@ -120,6 +150,25 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           effect.none(),
         )
       }
+
+    // Shape slider: re-run draw at the new Int; clock keeps running.
+    SetShapeSlider(value) ->
+      case run_source(value, model.source) {
+        Ok(paths) -> #(
+          Model(..model, error: "", shape_slider: value),
+          paint_paths(paths, False),
+        )
+        Error(msg) -> #(
+          Model(..model, error: msg, shape_slider: value),
+          effect.none(),
+        )
+      }
+
+    // Speed slider: bipolar rate; midpoint ≈ 0 pauses.
+    SetSpeed(rate) -> #(
+      Model(..model, speed: rate),
+      effect.from(fn(_) { render.set_speed(rate) }),
+    )
   }
 }
 
@@ -148,11 +197,87 @@ fn view_anim(model: Model) -> Element(Msg) {
     "" -> "canvas-area"
     _ -> "canvas-area has-error"
   }
+  // Canvas stage above; control strip docked underneath (not over the canvas).
+  // Error overlay lives inside the stage so sliders stay usable while fixing.
   html.div([attr.class(area_class)], [
     view_reveal_code(model),
-    html.canvas([attr.id("animation-canvas"), attr.class("canvas")]),
-    view_error_overlay(model.error),
+    html.div([attr.class("canvas-stage")], [
+      html.canvas([attr.id("animation-canvas"), attr.class("canvas")]),
+      view_error_overlay(model.error),
+    ]),
+    view_control_strip(model),
   ])
+}
+
+/// Under-canvas strip: Shape → draw(shape_slider); Speed → set_speed(rate).
+fn view_control_strip(model: Model) -> Element(Msg) {
+  html.div([attr.class("control-strip")], [
+    view_shape_row(model.shape_slider),
+    view_speed_row(model.speed),
+  ])
+}
+
+fn view_shape_row(shape_slider: Int) -> Element(Msg) {
+  html.div([attr.class("control-row")], [
+    html.label([attr.class("control-label"), attr.for("shape-slider")], [
+      html.text("Shape"),
+    ]),
+    html.input([
+      attr.type_("range"),
+      attr.id("shape-slider"),
+      attr.attribute("data-test-id", "shape-slider"),
+      attr.class("control-slider"),
+      attr.min("0"),
+      attr.max("100"),
+      attr.step("1"),
+      attr.value(int.to_string(shape_slider)),
+      event.on_input(fn(raw) {
+        case int.parse(raw) {
+          Ok(n) -> SetShapeSlider(n)
+          Error(_) -> SetShapeSlider(shape_slider)
+        }
+      }),
+    ]),
+    html.span([attr.class("control-value")], [
+      html.text(int.to_string(shape_slider)),
+    ]),
+  ])
+}
+
+fn view_speed_row(speed: Float) -> Element(Msg) {
+  html.div([attr.class("control-row control-row-speed")], [
+    html.label([attr.class("control-label"), attr.for("speed-slider")], [
+      html.text("Speed"),
+    ]),
+    html.div([attr.class("speed-track-wrap")], [
+      html.input([
+        attr.type_("range"),
+        attr.id("speed-slider"),
+        attr.attribute("data-test-id", "speed-slider"),
+        attr.class("control-slider speed-slider"),
+        attr.min(float.to_string(0.0 -. speed_max)),
+        attr.max(float.to_string(speed_max)),
+        attr.step("0.1"),
+        attr.value(float.to_string(speed)),
+        event.on_input(fn(raw) {
+          case float.parse(raw) {
+            Ok(rate) -> SetSpeed(rate)
+            Error(_) -> SetSpeed(speed)
+          }
+        }),
+      ]),
+      html.div([attr.class("speed-legend")], [
+        html.text("◀ reverse · ▶ fwd"),
+      ]),
+    ]),
+    html.span([attr.class("control-value")], [
+      html.text(format_speed(speed)),
+    ]),
+  ])
+}
+
+fn format_speed(rate: Float) -> String {
+  float.to_string(rate) <> "×"
 }
 
 /// Semi-transparent toast centered over the canvas. Backdrop click or the
