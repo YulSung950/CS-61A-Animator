@@ -42,7 +42,9 @@ pub type Model {
     source: String,
     // Whether the code editor is shown.
     code_open: Bool,
-    output: String,
+    // Latest parse/eval error message, or "" when the last run succeeded /
+    // the overlay was dismissed. Shown as a canvas overlay toast.
+    error: String,
   )
 }
 
@@ -51,17 +53,25 @@ pub type Msg {
 
   // Layout controls
   ToggleCode
+
+  // Clear the canvas error overlay (Esc, dismiss button, or backdrop click).
+  DismissError
 }
+
+@external(javascript, "./app_ffi.mjs", "listenEscape")
+fn listen_escape(on_escape: fn() -> Nil) -> Nil
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 pub fn init(_flags: Nil) -> #(Model, Effect(Msg)) {
   #(
-    Model(source: "", code_open: True, output: ""),
+    Model(source: "", code_open: True, error: ""),
     // Effects that happen automatically at the start go here.
     effect.batch([
       editor.mount(default_code, SetCode),
       effect.from(fn(dispatch) { dispatch(SetCode(default_code)) }),
+      // Esc dismisses the canvas error overlay from anywhere (incl. the editor).
+      effect.from(fn(dispatch) { listen_escape(fn() { dispatch(DismissError) }) }),
     ]),
   )
 }
@@ -84,15 +94,17 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
     ToggleCode -> #(Model(..model, code_open: !model.code_open), effect.none())
 
+    DismissError -> #(Model(..model, error: ""), effect.none())
+
     // After each keystroke in the editor, evaluate user code and animate
-    // its paths (or surface a temporary error message until an error UI is chosen).
+    // its paths, or show the canvas error overlay on failure.
     SetCode(text) ->
       case run_source(10, text) {
         Ok(paths) -> {
           let rendered =
             list.map(paths, fn(path) { render.render_path(path, "#ffffff") })
           #(
-            Model(..model, output: "", source: text),
+            Model(..model, error: "", source: text),
             // Replace the drawing and restart the clock so the new paths
             // animate from the beginning at normal speed.
             effect.from(fn(_) {
@@ -101,9 +113,10 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
             }),
           )
         }
-        // Broken (parse or evaluation): inform the user (temporary text).
+        // Keep the previous drawing; do not call set_drawing. Overlay shows
+        // the error over the dimmed canvas until the next success or dismiss.
         Error(msg) -> #(
-          Model(..model, output: msg, source: text),
+          Model(..model, error: msg, source: text),
           effect.none(),
         )
       }
@@ -131,15 +144,51 @@ pub fn view(model: Model) -> Element(Msg) {
 }
 
 fn view_anim(model: Model) -> Element(Msg) {
-  html.div([attr.class("canvas-area")], [
+  let area_class = case model.error {
+    "" -> "canvas-area"
+    _ -> "canvas-area has-error"
+  }
+  html.div([attr.class(area_class)], [
     view_reveal_code(model),
     html.canvas([attr.id("animation-canvas"), attr.class("canvas")]),
-    // Temporary error text until a dedicated error UI is chosen.
-    case model.output {
-      "" -> element.none()
-      msg -> html.pre([attr.class("output")], [html.text(msg)])
-    },
+    view_error_overlay(model.error),
   ])
+}
+
+/// Semi-transparent toast centered over the canvas. Backdrop click or the
+/// Dismiss button clears it; Esc is handled globally in init.
+fn view_error_overlay(error: String) -> Element(Msg) {
+  case error {
+    "" -> element.none()
+    msg ->
+      html.div(
+        [attr.class("error-overlay"), attr.attribute("role", "alert")],
+        [
+          // Full-bleed dimmer; click dismisses without covering the toast.
+          html.div(
+            [
+              attr.class("error-overlay-backdrop"),
+              event.on_click(DismissError),
+            ],
+            [],
+          ),
+          html.div([attr.class("error-toast")], [
+            html.div([attr.class("error-toast-title")], [
+              html.text("Couldn't draw"),
+            ]),
+            html.pre([attr.class("error-toast-msg")], [html.text(msg)]),
+            html.button(
+              [
+                attr.class("error-toast-dismiss"),
+                attr.attribute("type", "button"),
+                event.on_click(DismissError),
+              ],
+              [html.text("Dismiss")],
+            ),
+          ]),
+        ],
+      )
+  }
 }
 
 // The button that brings the code column back, overlaid on the top-left of the

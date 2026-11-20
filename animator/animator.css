@@ -181,3 +181,75 @@ html, body { width: 100%; height: 100%; overflow: hidden; }
   height: min(100cqw, 100cqh);
 }
 
+/* Dim the last successful drawing while an error overlay is up — keep it
+   readable under the toast (mockup: previous animation stays underneath). */
+.canvas-area.has-error .canvas {
+  opacity: 0.72;
+  transition: opacity 0.15s ease;
+}
+
+/* Canvas overlay toast (error UI option 2). */
+.error-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.error-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  /* Light dimmer so the last drawing remains visible under the toast. */
+  background: rgba(6, 6, 14, 0.18);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.error-toast {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  max-width: min(420px, 85%);
+  padding: 18px 20px 14px;
+  border-radius: 8px;
+  border: 1px solid #5a3a4a;
+  background: rgba(28, 16, 24, 0.92);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  color: #f0d8de;
+}
+
+.error-toast-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  margin-bottom: 8px;
+  color: #ffb4c0;
+}
+
+.error-toast-msg {
+  margin: 0 0 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #e8c8d0;
+}
+
+.error-toast-dismiss {
+  appearance: none;
+  border: 1px solid #6a4a5a;
+  background: #3a2430;
+  color: #f0d8de;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.error-toast-dismiss:hover {
+  background: #4a3040;
+}
+
