@@ -1,6 +1,7 @@
 //// Animator -- an application for program-generated drawings.
 
 import builtins
+import data.{type Library, Library}
 import drawing
 import editor
 import errors
@@ -33,8 +34,8 @@ pub const video_url = ""
 /// Set to True if you would like your video included in the course gallery.
 pub const include_video_in_gallery = False
 
-const default_code =
-  "fn draw(shape_slider: Int) -> List(Path) {\n  [Path(Line(Point(0, 0), Point(100, 100)), 0, 10, 2)]\n}\n"
+/// Autosave debounce for editor edits (must stay within 3s).
+const autosave_ms = 800
 
 /// Default shape-slider position (reference range [0, 100]).
 const default_shape_slider = 10
@@ -60,11 +61,17 @@ pub type Model {
     shape_slider: Int,
     // Playback rate passed to render.set_speed (negative = reverse).
     speed: Float,
+    // Saved drawings + which one is open (also mirrored in localStorage).
+    library: Library,
   )
 }
 
 pub type Msg {
+  /// Editor keystroke / remount callback. On failure, keep the prior drawing.
   SetCode(String)
+
+  /// Load a named library entry into the editor. On failure, clear the canvas.
+  OpenDrawing(String)
 
   // Layout controls
   ToggleCode
@@ -75,6 +82,10 @@ pub type Msg {
   // Control strip
   SetShapeSlider(Int)
   SetSpeed(Float)
+
+  // Drawing library menu (`data-test-id="drawing-select"`).
+  // Empty string = create-new option.
+  SelectDrawing(String)
 }
 
 @external(javascript, "./app_ffi.mjs", "listenEscape")
@@ -83,22 +94,34 @@ fn listen_escape(on_escape: fn() -> Nil) -> Nil
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 pub fn init(_flags: Nil) -> #(Model, Effect(Msg)) {
-  #(
+  let library = data.load()
+  let source = case data.find_source(library.drawings, library.current) {
+    Ok(src) -> src
+    Error(_) -> data.new_drawing_stub
+  }
+  let model =
     Model(
-      source: "",
+      source:,
       code_open: True,
       error: "",
       shape_slider: default_shape_slider,
       speed: default_speed,
-    ),
-    // Effects that happen automatically at the start go here.
+      library:,
+    )
+  // Mount + open the restored drawing. On parse/eval failure: show code +
+  // overlay and clear the canvas (no stale paths).
+  #(
+    model,
     effect.batch([
-      editor.mount(default_code, SetCode),
-      effect.from(fn(dispatch) { dispatch(SetCode(default_code)) }),
-      // Esc dismisses the canvas error overlay from anywhere (incl. the editor).
-      effect.from(fn(dispatch) { listen_escape(fn() { dispatch(DismissError) }) }),
+      editor.mount(source, SetCode),
+      effect.from(fn(dispatch) { dispatch(OpenDrawing(source)) }),
+      listen_esc(),
     ]),
   )
+}
+
+fn listen_esc() -> Effect(Msg) {
+  effect.from(fn(dispatch) { listen_escape(fn() { dispatch(DismissError) }) })
 }
 
 // Parse and evaluate a draw function at the given shape-slider value, returning
@@ -125,6 +148,29 @@ fn paint_paths(paths: List(Path), reset: Bool) -> Effect(Msg) {
   })
 }
 
+/// Empty the canvas (used when opening a bad drawing).
+fn clear_canvas() -> Effect(Msg) {
+  effect.from(fn(_) {
+    render.set_drawing([])
+    render.reset_clock()
+  })
+}
+
+fn with_library_source(model: Model, source: String) -> Model {
+  let drawings =
+    data.upsert(model.library.drawings, model.library.current, source)
+  let library = Library(drawings:, current: model.library.current)
+  Model(..model, source:, library:)
+}
+
+fn persist_soon(library: Library) -> Effect(Msg) {
+  effect.from(fn(_) { data.save_soon(library, autosave_ms) })
+}
+
+fn persist_now(library: Library) -> Effect(Msg) {
+  effect.from(fn(_) { data.save_now(library) })
+}
+
 // ── Update ─────────────────────────────────────────────────────────────────────
 
 pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
@@ -134,22 +180,41 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     DismissError -> #(Model(..model, error: ""), effect.none())
 
     // After each keystroke in the editor, evaluate user code and animate
-    // its paths, or show the canvas error overlay on failure.
-    SetCode(text) ->
+    // its paths, or show the canvas error overlay on failure. Edits are
+    // written into the in-memory library immediately and autosaved soon,
+    // even when the code is invalid.
+    SetCode(text) -> {
+      let model = with_library_source(model, text)
+      let save = persist_soon(model.library)
       case run_source(model.shape_slider, text) {
         Ok(paths) -> #(
-          Model(..model, error: "", source: text),
+          Model(..model, error: ""),
           // Replace the drawing and restart the clock so the new paths
           // animate from the beginning at the current speed.
-          paint_paths(paths, True),
+          effect.batch([save, paint_paths(paths, True)]),
         )
         // Keep the previous drawing; do not call set_drawing. Overlay shows
         // the error over the dimmed canvas until the next success or dismiss.
+        Error(msg) -> #(Model(..model, error: msg), save)
+      }
+    }
+
+    // Restore / menu switch / new drawing: same as SetCode on success, but
+    // clear the canvas on failure so a bad open never leaves stale paths.
+    OpenDrawing(text) -> {
+      let model = with_library_source(model, text)
+      let save = persist_now(model.library)
+      case run_source(model.shape_slider, text) {
+        Ok(paths) -> #(
+          Model(..model, error: ""),
+          effect.batch([save, paint_paths(paths, True)]),
+        )
         Error(msg) -> #(
-          Model(..model, error: msg, source: text),
-          effect.none(),
+          Model(..model, error: msg),
+          effect.batch([save, clear_canvas()]),
         )
       }
+    }
 
     // Shape slider: re-run draw at the new Int; clock keeps running.
     SetShapeSlider(value) ->
@@ -169,6 +234,66 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       Model(..model, speed: rate),
       effect.from(fn(_) { render.set_speed(rate) }),
     )
+
+    SelectDrawing("") -> handle_create_new(model)
+
+    SelectDrawing(name) -> switch_to_drawing(model, name)
+  }
+}
+
+fn handle_create_new(model: Model) -> #(Model, Effect(Msg)) {
+  case data.prompt_drawing_name() {
+    "" -> #(
+      model,
+      effect.from(fn(_) {
+        data.set_select_value("drawing-select", model.library.current)
+      }),
+    )
+    name ->
+      case data.find_source(model.library.drawings, name) {
+        // Name already exists: just open it (do not overwrite).
+        Ok(_) -> switch_to_drawing(model, name)
+        Error(_) -> {
+          let drawings =
+            data.upsert(
+              model.library.drawings,
+              name,
+              data.new_drawing_stub,
+            )
+          let library = Library(drawings:, current: name)
+          let source = data.new_drawing_stub
+          let model = Model(..model, library:, source:, error: "")
+          #(
+            model,
+            effect.batch([
+              persist_now(library),
+              editor.mount(source, SetCode),
+              effect.from(fn(dispatch) { dispatch(OpenDrawing(source)) }),
+            ]),
+          )
+        }
+      }
+  }
+}
+
+fn switch_to_drawing(model: Model, name: String) -> #(Model, Effect(Msg)) {
+  // Flush current edits into the library entry being left, then open `name`.
+  let drawings =
+    data.upsert(model.library.drawings, model.library.current, model.source)
+  case data.find_source(drawings, name) {
+    Error(_) -> #(model, effect.none())
+    Ok(source) -> {
+      let library = Library(drawings:, current: name)
+      let model = Model(..model, library:, source:)
+      #(
+        model,
+        effect.batch([
+          persist_now(library),
+          editor.mount(source, SetCode),
+          effect.from(fn(dispatch) { dispatch(OpenDrawing(source)) }),
+        ]),
+      )
+    }
   }
 }
 
@@ -186,7 +311,12 @@ pub fn view(model: Model) -> Element(Msg) {
   // mounted CodeMirror editor keeps its state across show/hide.
   html.div([attr.class(app_class)], [
     html.div([attr.class("code-col")], [
-      editor.view_panel(ToggleCode),
+      editor.view_panel(
+        ToggleCode,
+        model.library.drawings,
+        model.library.current,
+        SelectDrawing,
+      ),
     ]),
     view_anim(model),
   ])
