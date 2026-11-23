@@ -390,9 +390,15 @@ fn view_speed_row(speed: Float) -> Element(Msg) {
         attr.step("0.1"),
         attr.value(float.to_string(speed)),
         event.on_input(fn(raw) {
+          // Range inputs often stringify whole numbers as "2" / "-2" with no
+          // decimal. gleam/float.parse requires "\d+.\d+", so fall back to int.
           case float.parse(raw) {
             Ok(rate) -> SetSpeed(rate)
-            Error(_) -> SetSpeed(speed)
+            Error(_) ->
+              case int.parse(raw) {
+                Ok(n) -> SetSpeed(int.to_float(n))
+                Error(_) -> SetSpeed(speed)
+              }
           }
         }),
       ]),
