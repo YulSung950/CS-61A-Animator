@@ -149,8 +149,8 @@ pub fn seed_from_examples() -> Library {
 }
 
 /// Merge any example drawings missing from a stored library (e.g. new seeds
-/// like `house`, `grid_8x8`, `circle_x`) so they show up in drawing-select
-/// without wiping edits.
+/// like `house`, `grid_8x8`) so they show up in drawing-select without wiping
+/// edits.
 pub fn merge_example_seeds(
   drawings: List(#(String, String)),
 ) -> List(#(String, String)) {

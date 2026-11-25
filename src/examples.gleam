@@ -169,32 +169,4 @@ fn v_lines(i: Int) -> List(Path) {
 }
 ",
   ),
-  #(
-    "circle_x",
-    "fn draw(shape_slider: Int) -> List(Path) {
-  // No Circle shape in the language — approximate with Path/Line chords.
-  list.append(
-    ring(Point(240, 0), Point(0, 40), 0, 40),
-    [
-      Path(Line(Point(-170, -170), Point(170, 170)), 42, 52, 3),
-      Path(Line(Point(-170, 170), Point(170, -170)), 52, 62, 3),
-    ],
-  )
-}
-
-fn ring(p: Point, d: Point, i: Int, n: Int) -> List(Path) {
-  case i == n {
-    True -> []
-    False -> {
-      let q = Point(p.x + d.x / 6, p.y + d.y / 6)
-      let nd = Point(d.x - d.y / 10, d.y + d.x / 10)
-      [
-        Path(Line(p, q), i / 2, i / 2 + 2, 3),
-        ..ring(q, nd, i + 1, n)
-      ]
-    }
-  }
-}
-",
-  ),
 ]
