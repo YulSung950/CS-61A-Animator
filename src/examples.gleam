@@ -118,4 +118,83 @@ fn branch(p: Point, d: Point, level: Int, depth: Int) -> List(Path) {
 }
 ",
   ),
+  #(
+    "house",
+    "fn draw(shape_slider: Int) -> List(Path) {
+  list.flatten([
+    [
+      Path(Line(Point(-160, 40), Point(160, 40)), 0, 4, 4),
+      Path(Line(Point(160, 40), Point(160, 320)), 4, 8, 4),
+      Path(Line(Point(160, 320), Point(-160, 320)), 8, 12, 4),
+      Path(Line(Point(-160, 320), Point(-160, 40)), 12, 16, 4),
+    ],
+    [
+      Path(Line(Point(-160, 40), Point(0, -200)), 16, 24, 4),
+      Path(Line(Point(0, -200), Point(160, 40)), 24, 32, 4),
+    ],
+  ])
+}
+",
+  ),
+  #(
+    "grid_8x8",
+    "fn draw(shape_slider: Int) -> List(Path) {
+  list.append(h_lines(0), v_lines(0))
+}
+
+fn h_lines(i: Int) -> List(Path) {
+  case i > 8 {
+    True -> []
+    False -> {
+      let y = -200 + i * 50
+      [
+        Path(Line(Point(-200, y), Point(200, y)), i * 2, i * 2 + 3, 2),
+        ..h_lines(i + 1)
+      ]
+    }
+  }
+}
+
+fn v_lines(i: Int) -> List(Path) {
+  case i > 8 {
+    True -> []
+    False -> {
+      let x = -200 + i * 50
+      [
+        Path(Line(Point(x, -200), Point(x, 200)), 20 + i * 2, 20 + i * 2 + 3, 2),
+        ..v_lines(i + 1)
+      ]
+    }
+  }
+}
+",
+  ),
+  #(
+    "circle_x",
+    "fn draw(shape_slider: Int) -> List(Path) {
+  // No Circle shape in the language — approximate with Path/Line chords.
+  list.append(
+    ring(Point(240, 0), Point(0, 40), 0, 40),
+    [
+      Path(Line(Point(-170, -170), Point(170, 170)), 42, 52, 3),
+      Path(Line(Point(-170, 170), Point(170, -170)), 52, 62, 3),
+    ],
+  )
+}
+
+fn ring(p: Point, d: Point, i: Int, n: Int) -> List(Path) {
+  case i == n {
+    True -> []
+    False -> {
+      let q = Point(p.x + d.x / 6, p.y + d.y / 6)
+      let nd = Point(d.x - d.y / 10, d.y + d.x / 10)
+      [
+        Path(Line(p, q), i / 2, i / 2 + 2, 3),
+        ..ring(q, nd, i + 1, n)
+      ]
+    }
+  }
+}
+",
+  ),
 ]
