@@ -23,7 +23,7 @@ import shape.{type Path}
 
 /// Your app's public address, once you've deployed it in Problem 13, such as
 /// "https://your-username.github.io/animator/".
-pub const public_url = ""
+pub const public_url = "https://github.com/YulSung950/animator"
 
 /// Set to True if you would like your app's URL included in the course gallery.
 pub const include_app_in_gallery = False
@@ -433,11 +433,7 @@ fn handle_create_new(model: Model) -> #(Model, Effect(Msg)) {
         Ok(_) -> switch_to_drawing(model, name)
         Error(_) -> {
           let drawings =
-            data.upsert(
-              model.library.drawings,
-              name,
-              data.new_drawing_stub,
-            )
+            data.upsert(model.library.drawings, name, data.new_drawing_stub)
           let library = Library(drawings:, current: name)
           let source = data.new_drawing_stub
           let model = Model(..model, library:, source:, error: "")
@@ -712,9 +708,12 @@ fn view_music_row(model: Model) -> Element(Msg) {
           attr.class("ext-file-input"),
         ]),
       ]),
-      html.label([attr.class("music-sens-label"), attr.for("music-sensitivity")], [
-        html.text("Sens"),
-      ]),
+      html.label(
+        [attr.class("music-sens-label"), attr.for("music-sensitivity")],
+        [
+          html.text("Sens"),
+        ],
+      ),
       html.input([
         attr.type_("range"),
         attr.id("music-sensitivity"),
@@ -769,33 +768,30 @@ fn view_error_overlay(error: String) -> Element(Msg) {
   case error {
     "" -> element.none()
     msg ->
-      html.div(
-        [attr.class("error-overlay"), attr.attribute("role", "alert")],
-        [
-          // Full-bleed dimmer; click dismisses without covering the toast.
-          html.div(
+      html.div([attr.class("error-overlay"), attr.attribute("role", "alert")], [
+        // Full-bleed dimmer; click dismisses without covering the toast.
+        html.div(
+          [
+            attr.class("error-overlay-backdrop"),
+            event.on_click(DismissError),
+          ],
+          [],
+        ),
+        html.div([attr.class("error-toast")], [
+          html.div([attr.class("error-toast-title")], [
+            html.text("Couldn't draw"),
+          ]),
+          html.pre([attr.class("error-toast-msg")], [html.text(msg)]),
+          html.button(
             [
-              attr.class("error-overlay-backdrop"),
+              attr.class("error-toast-dismiss"),
+              attr.attribute("type", "button"),
               event.on_click(DismissError),
             ],
-            [],
+            [html.text("Dismiss")],
           ),
-          html.div([attr.class("error-toast")], [
-            html.div([attr.class("error-toast-title")], [
-              html.text("Couldn't draw"),
-            ]),
-            html.pre([attr.class("error-toast-msg")], [html.text(msg)]),
-            html.button(
-              [
-                attr.class("error-toast-dismiss"),
-                attr.attribute("type", "button"),
-                event.on_click(DismissError),
-              ],
-              [html.text("Dismiss")],
-            ),
-          ]),
-        ],
-      )
+        ]),
+      ])
   }
 }
 
