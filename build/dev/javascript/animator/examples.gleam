@@ -39,6 +39,31 @@ fn spiral(p: Point, d: Point, i: Int, n: Int) -> List(Path) {
 ",
   ),
   #(
+    "circle_spiral",
+    "fn draw(shape_slider: Int) -> List(Path) {
+  let steps = 90 + shape_slider
+  circle_spiral(Point(0, 0), Point(48, 0), 0, steps)
+}
+
+fn circle_spiral(p: Point, d: Point, i: Int, n: Int) -> List(Path) {
+  case i == n {
+    True -> []
+    False -> {
+      let q = Point(p.x + d.x / 6, p.y + d.y / 6)
+      // Soft integer rotate (~atan(1/10)) plus slight growth → Archimedean spiral.
+      let rx = d.x - d.y / 10
+      let ry = d.y + d.x / 10
+      let nd = Point(rx + rx / 80, ry + ry / 80)
+      [
+        Path(Line(p, q), i / 2, i / 2 + 2, 2),
+        ..circle_spiral(q, nd, i + 1, n)
+      ]
+    }
+  }
+}
+",
+  ),
+  #(
     "string_art",
     "fn draw(shape_slider: Int) -> List(Path) {
   let n = 8 + shape_slider / 10

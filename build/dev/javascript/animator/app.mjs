@@ -9,7 +9,21 @@ import * as $effect from "../lustre/lustre/effect.mjs";
 import * as $element from "../lustre/lustre/element.mjs";
 import * as $html from "../lustre/lustre/element/html.mjs";
 import * as $event from "../lustre/lustre/event.mjs";
-import { listenEscape as listen_escape } from "./app_ffi.mjs";
+import {
+  listenEscape as listen_escape,
+  setDuelEnabled as set_duel_enabled,
+  setDuelMode as set_duel_mode_js,
+  listenDuelStatus as listen_duel_status,
+  setMusicSensitivity as set_music_sensitivity_js,
+  setMusicBassLink as set_music_bass_link_js,
+  setMusicBaseSpeed as set_music_base_speed_js,
+  wireMusicCallbacks as wire_music_callbacks,
+  toggleMusic as toggle_music_js,
+  pauseMusic as pause_music_js,
+  useBuiltinMusic as use_builtin_music_js,
+  bindMusicFileInput as bind_music_file_input,
+  bindMusicPlayGesture as bind_music_play_gesture,
+} from "./app_ffi.mjs";
 import * as $builtins from "./builtins.mjs";
 import * as $data from "./data.mjs";
 import { Library } from "./data.mjs";
@@ -29,8 +43,18 @@ import * as $shape from "./shape.mjs";
 
 const FILEPATH = "src/app.gleam";
 
+export class VsAi extends $CustomType {}
+export const DuelMode$VsAi$const = new VsAi();
+export const DuelMode$VsAi = () => DuelMode$VsAi$const;
+export const DuelMode$isVsAi = (value) => value instanceof VsAi;
+
+export class Hotseat extends $CustomType {}
+export const DuelMode$Hotseat$const = new Hotseat();
+export const DuelMode$Hotseat = () => DuelMode$Hotseat$const;
+export const DuelMode$isHotseat = (value) => value instanceof Hotseat;
+
 export class Model extends $CustomType {
-  constructor(source, code_open, error, shape_slider, speed, library) {
+  constructor(source, code_open, error, shape_slider, speed, library, duel_on, duel_mode, duel_status, music_on, music_sensitivity, music_bass_link) {
     super();
     this.source = source;
     this.code_open = code_open;
@@ -38,10 +62,27 @@ export class Model extends $CustomType {
     this.shape_slider = shape_slider;
     this.speed = speed;
     this.library = library;
+    this.duel_on = duel_on;
+    this.duel_mode = duel_mode;
+    this.duel_status = duel_status;
+    this.music_on = music_on;
+    this.music_sensitivity = music_sensitivity;
+    this.music_bass_link = music_bass_link;
   }
 }
-export const Model$Model = (source, code_open, error, shape_slider, speed, library) =>
-  new Model(source, code_open, error, shape_slider, speed, library);
+export const Model$Model = (source, code_open, error, shape_slider, speed, library, duel_on, duel_mode, duel_status, music_on, music_sensitivity, music_bass_link) =>
+  new Model(source,
+  code_open,
+  error,
+  shape_slider,
+  speed,
+  library,
+  duel_on,
+  duel_mode,
+  duel_status,
+  music_on,
+  music_sensitivity,
+  music_bass_link);
 export const Model$isModel = (value) => value instanceof Model;
 export const Model$Model$source = (value) => value.source;
 export const Model$Model$0 = (value) => value.source;
@@ -55,6 +96,18 @@ export const Model$Model$speed = (value) => value.speed;
 export const Model$Model$4 = (value) => value.speed;
 export const Model$Model$library = (value) => value.library;
 export const Model$Model$5 = (value) => value.library;
+export const Model$Model$duel_on = (value) => value.duel_on;
+export const Model$Model$6 = (value) => value.duel_on;
+export const Model$Model$duel_mode = (value) => value.duel_mode;
+export const Model$Model$7 = (value) => value.duel_mode;
+export const Model$Model$duel_status = (value) => value.duel_status;
+export const Model$Model$8 = (value) => value.duel_status;
+export const Model$Model$music_on = (value) => value.music_on;
+export const Model$Model$9 = (value) => value.music_on;
+export const Model$Model$music_sensitivity = (value) => value.music_sensitivity;
+export const Model$Model$10 = (value) => value.music_sensitivity;
+export const Model$Model$music_bass_link = (value) => value.music_bass_link;
+export const Model$Model$11 = (value) => value.music_bass_link;
 
 /**
  * Editor keystroke / remount callback. On failure, keep the prior drawing.
@@ -122,12 +175,85 @@ export const Msg$SelectDrawing = ($0) => new SelectDrawing($0);
 export const Msg$isSelectDrawing = (value) => value instanceof SelectDrawing;
 export const Msg$SelectDrawing$0 = (value) => value[0];
 
+export class ToggleDuel extends $CustomType {}
+export const Msg$ToggleDuel$const = new ToggleDuel();
+export const Msg$ToggleDuel = () => Msg$ToggleDuel$const;
+export const Msg$isToggleDuel = (value) => value instanceof ToggleDuel;
+
+export class SetDuelMode extends $CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+}
+export const Msg$SetDuelMode = ($0) => new SetDuelMode($0);
+export const Msg$isSetDuelMode = (value) => value instanceof SetDuelMode;
+export const Msg$SetDuelMode$0 = (value) => value[0];
+
+export class DuelStatus extends $CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+}
+export const Msg$DuelStatus = ($0) => new DuelStatus($0);
+export const Msg$isDuelStatus = (value) => value instanceof DuelStatus;
+export const Msg$DuelStatus$0 = (value) => value[0];
+
+export class ToggleMusic extends $CustomType {}
+export const Msg$ToggleMusic$const = new ToggleMusic();
+export const Msg$ToggleMusic = () => Msg$ToggleMusic$const;
+export const Msg$isToggleMusic = (value) => value instanceof ToggleMusic;
+
+export class MusicPlaying extends $CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+}
+export const Msg$MusicPlaying = ($0) => new MusicPlaying($0);
+export const Msg$isMusicPlaying = (value) => value instanceof MusicPlaying;
+export const Msg$MusicPlaying$0 = (value) => value[0];
+
+export class SetMusicSensitivity extends $CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+}
+export const Msg$SetMusicSensitivity = ($0) => new SetMusicSensitivity($0);
+export const Msg$isSetMusicSensitivity = (value) =>
+  value instanceof SetMusicSensitivity;
+export const Msg$SetMusicSensitivity$0 = (value) => value[0];
+
+export class ToggleBassLink extends $CustomType {}
+export const Msg$ToggleBassLink$const = new ToggleBassLink();
+export const Msg$ToggleBassLink = () => Msg$ToggleBassLink$const;
+export const Msg$isToggleBassLink = (value) => value instanceof ToggleBassLink;
+
+export class MusicBass extends $CustomType {
+  constructor($0) {
+    super();
+    this[0] = $0;
+  }
+}
+export const Msg$MusicBass = ($0) => new MusicBass($0);
+export const Msg$isMusicBass = (value) => value instanceof MusicBass;
+export const Msg$MusicBass$0 = (value) => value[0];
+
 /**
  * Default playback rate: 1.0× forward (matches canvas.mjs startup).
  * 
  * @ignore
  */
 const default_speed = 1.0;
+
+/**
+ * Default music-sync sensitivity (0.05–1.5).
+ * 
+ * @ignore
+ */
+const default_music_sensitivity = 0.55;
 
 /**
  * Default shape-slider position (reference range [0, 100]).
@@ -171,6 +297,23 @@ export const video_url = "";
  */
 export const include_video_in_gallery = false;
 
+function wire_extensions() {
+  return $effect.from(
+    (dispatch) => {
+      listen_duel_status((label) => { return dispatch(new DuelStatus(label)); });
+      set_music_sensitivity_js(default_music_sensitivity);
+      set_music_base_speed_js(default_speed);
+      wire_music_callbacks(
+        (shape) => { return dispatch(new MusicBass(shape)); },
+        (_) => { return undefined; },
+      );
+      bind_music_file_input("music-file");
+      bind_music_play_gesture();
+      return use_builtin_music_js();
+    },
+  );
+}
+
 function listen_esc() {
   return $effect.from(
     (dispatch) => {
@@ -197,6 +340,12 @@ export function init(_) {
     default_shape_slider,
     default_speed,
     library,
+    false,
+    DuelMode$VsAi$const,
+    "",
+    false,
+    default_music_sensitivity,
+    false,
   );
   return [
     model,
@@ -207,7 +356,10 @@ export function init(_) {
           $effect.from(
             (dispatch) => { return dispatch(new OpenDrawing(source)); },
           ),
-          listPrepend(listen_esc(), $List$Empty$const),
+          listPrepend(
+            listen_esc(),
+            listPrepend(wire_extensions(), $List$Empty$const),
+          ),
         ),
       ),
     ),
@@ -270,6 +422,12 @@ function with_library_source(model, source) {
     model.shape_slider,
     model.speed,
     library,
+    model.duel_on,
+    model.duel_mode,
+    model.duel_status,
+    model.music_on,
+    model.music_sensitivity,
+    model.music_bass_link,
   );
 }
 
@@ -279,6 +437,14 @@ function persist_soon(library) {
 
 function persist_now(library) {
   return $effect.from((_) => { return $data.save_now(library); });
+}
+
+function duel_mode_name(mode) {
+  if (mode instanceof VsAi) {
+    return "ai";
+  } else {
+    return "hotseat";
+  }
 }
 
 function switch_to_drawing(model, name) {
@@ -298,6 +464,12 @@ function switch_to_drawing(model, name) {
       model.shape_slider,
       model.speed,
       library,
+      model.duel_on,
+      model.duel_mode,
+      model.duel_status,
+      model.music_on,
+      model.music_sensitivity,
+      model.music_bass_link,
     );
     return [
       model$1,
@@ -352,6 +524,12 @@ function handle_create_new(model) {
         model.shape_slider,
         model.speed,
         library,
+        model.duel_on,
+        model.duel_mode,
+        model.duel_status,
+        model.music_on,
+        model.music_sensitivity,
+        model.music_bass_link,
       );
       return [
         model$1,
@@ -390,6 +568,12 @@ export function update(model, msg) {
           model$1.shape_slider,
           model$1.speed,
           model$1.library,
+          model$1.duel_on,
+          model$1.duel_mode,
+          model$1.duel_status,
+          model$1.music_on,
+          model$1.music_sensitivity,
+          model$1.music_bass_link,
         ),
         $effect.batch(
           listPrepend(
@@ -408,6 +592,12 @@ export function update(model, msg) {
           model$1.shape_slider,
           model$1.speed,
           model$1.library,
+          model$1.duel_on,
+          model$1.duel_mode,
+          model$1.duel_status,
+          model$1.music_on,
+          model$1.music_sensitivity,
+          model$1.music_bass_link,
         ),
         save,
       ];
@@ -427,6 +617,12 @@ export function update(model, msg) {
           model$1.shape_slider,
           model$1.speed,
           model$1.library,
+          model$1.duel_on,
+          model$1.duel_mode,
+          model$1.duel_status,
+          model$1.music_on,
+          model$1.music_sensitivity,
+          model$1.music_bass_link,
         ),
         $effect.batch(
           listPrepend(
@@ -445,6 +641,12 @@ export function update(model, msg) {
           model$1.shape_slider,
           model$1.speed,
           model$1.library,
+          model$1.duel_on,
+          model$1.duel_mode,
+          model$1.duel_status,
+          model$1.music_on,
+          model$1.music_sensitivity,
+          model$1.music_bass_link,
         ),
         $effect.batch(
           listPrepend(save, listPrepend(clear_canvas(), $List$Empty$const)),
@@ -460,6 +662,12 @@ export function update(model, msg) {
         model.shape_slider,
         model.speed,
         model.library,
+        model.duel_on,
+        model.duel_mode,
+        model.duel_status,
+        model.music_on,
+        model.music_sensitivity,
+        model.music_bass_link,
       ),
       $effect.none(),
     ];
@@ -472,6 +680,12 @@ export function update(model, msg) {
         model.shape_slider,
         model.speed,
         model.library,
+        model.duel_on,
+        model.duel_mode,
+        model.duel_status,
+        model.music_on,
+        model.music_sensitivity,
+        model.music_bass_link,
       ),
       $effect.none(),
     ];
@@ -488,6 +702,12 @@ export function update(model, msg) {
           value,
           model.speed,
           model.library,
+          model.duel_on,
+          model.duel_mode,
+          model.duel_status,
+          model.music_on,
+          model.music_sensitivity,
+          model.music_bass_link,
         ),
         paint_paths(paths, false),
       ];
@@ -501,6 +721,12 @@ export function update(model, msg) {
           value,
           model.speed,
           model.library,
+          model.duel_on,
+          model.duel_mode,
+          model.duel_status,
+          model.music_on,
+          model.music_sensitivity,
+          model.music_bass_link,
         ),
         $effect.none(),
       ];
@@ -515,10 +741,21 @@ export function update(model, msg) {
         model.shape_slider,
         rate,
         model.library,
+        model.duel_on,
+        model.duel_mode,
+        model.duel_status,
+        model.music_on,
+        model.music_sensitivity,
+        model.music_bass_link,
       ),
-      $effect.from((_) => { return $render.set_speed(rate); }),
+      $effect.from(
+        (_) => {
+          $render.set_speed(rate);
+          return set_music_base_speed_js(rate);
+        },
+      ),
     ];
-  } else {
+  } else if (msg instanceof SelectDrawing) {
     let $ = msg[0];
     if ($ === "") {
       return handle_create_new(model);
@@ -526,7 +763,545 @@ export function update(model, msg) {
       let name = $;
       return switch_to_drawing(model, name);
     }
+  } else if (msg instanceof ToggleDuel) {
+    let on = !model.duel_on;
+    return [
+      new Model(
+        model.source,
+        model.code_open,
+        model.error,
+        model.shape_slider,
+        model.speed,
+        model.library,
+        on,
+        model.duel_mode,
+        (() => {
+          if (on) {
+            return "Mirror duel · WASD or Arrows · Space rematch";
+          } else {
+            return "";
+          }
+        })(),
+        model.music_on,
+        model.music_sensitivity,
+        model.music_bass_link,
+      ),
+      $effect.from(
+        (_) => {
+          set_duel_enabled(on);
+          return set_duel_mode_js(duel_mode_name(model.duel_mode));
+        },
+      ),
+    ];
+  } else if (msg instanceof SetDuelMode) {
+    let mode = msg[0];
+    return [
+      new Model(
+        model.source,
+        model.code_open,
+        model.error,
+        model.shape_slider,
+        model.speed,
+        model.library,
+        model.duel_on,
+        mode,
+        model.duel_status,
+        model.music_on,
+        model.music_sensitivity,
+        model.music_bass_link,
+      ),
+      $effect.from((_) => { return set_duel_mode_js(duel_mode_name(mode)); }),
+    ];
+  } else if (msg instanceof DuelStatus) {
+    let label = msg[0];
+    return [
+      new Model(
+        model.source,
+        model.code_open,
+        model.error,
+        model.shape_slider,
+        model.speed,
+        model.library,
+        model.duel_on,
+        model.duel_mode,
+        label,
+        model.music_on,
+        model.music_sensitivity,
+        model.music_bass_link,
+      ),
+      $effect.none(),
+    ];
+  } else if (msg instanceof ToggleMusic) {
+    return [
+      model,
+      $effect.from(
+        (dispatch) => {
+          let next = !model.music_on;
+          if (next) {
+            toggle_music_js();
+            return dispatch(new MusicPlaying(true));
+          } else {
+            pause_music_js();
+            return dispatch(new MusicPlaying(false));
+          }
+        },
+      ),
+    ];
+  } else if (msg instanceof MusicPlaying) {
+    let on = msg[0];
+    return [
+      new Model(
+        model.source,
+        model.code_open,
+        model.error,
+        model.shape_slider,
+        model.speed,
+        model.library,
+        model.duel_on,
+        model.duel_mode,
+        model.duel_status,
+        on,
+        model.music_sensitivity,
+        model.music_bass_link,
+      ),
+      $effect.none(),
+    ];
+  } else if (msg instanceof SetMusicSensitivity) {
+    let s = msg[0];
+    return [
+      new Model(
+        model.source,
+        model.code_open,
+        model.error,
+        model.shape_slider,
+        model.speed,
+        model.library,
+        model.duel_on,
+        model.duel_mode,
+        model.duel_status,
+        model.music_on,
+        s,
+        model.music_bass_link,
+      ),
+      $effect.from((_) => { return set_music_sensitivity_js(s); }),
+    ];
+  } else if (msg instanceof ToggleBassLink) {
+    let on = !model.music_bass_link;
+    return [
+      new Model(
+        model.source,
+        model.code_open,
+        model.error,
+        model.shape_slider,
+        model.speed,
+        model.library,
+        model.duel_on,
+        model.duel_mode,
+        model.duel_status,
+        model.music_on,
+        model.music_sensitivity,
+        on,
+      ),
+      $effect.from((_) => { return set_music_bass_link_js(on); }),
+    ];
+  } else {
+    let value = msg[0];
+    let $ = model.music_on && model.music_bass_link;
+    if ($) {
+      let $1 = value === model.shape_slider;
+      if ($1) {
+        return [model, $effect.none()];
+      } else {
+        let $2 = run_source(value, model.source);
+        if ($2 instanceof Ok) {
+          let paths = $2[0];
+          return [
+            new Model(
+              model.source,
+              model.code_open,
+              "",
+              value,
+              model.speed,
+              model.library,
+              model.duel_on,
+              model.duel_mode,
+              model.duel_status,
+              model.music_on,
+              model.music_sensitivity,
+              model.music_bass_link,
+            ),
+            paint_paths(paths, false),
+          ];
+        } else {
+          let msg$1 = $2[0];
+          return [
+            new Model(
+              model.source,
+              model.code_open,
+              msg$1,
+              value,
+              model.speed,
+              model.library,
+              model.duel_on,
+              model.duel_mode,
+              model.duel_status,
+              model.music_on,
+              model.music_sensitivity,
+              model.music_bass_link,
+            ),
+            $effect.none(),
+          ];
+        }
+      }
+    } else {
+      return [model, $effect.none()];
+    }
   }
+}
+
+function format_sens(s) {
+  return $float.to_string(s);
+}
+
+function view_music_row(model) {
+  let _block;
+  let $ = model.music_on;
+  if ($) {
+    _block = "Pause";
+  } else {
+    _block = "Play";
+  }
+  let play_label = _block;
+  return $html.div(
+    listPrepend(
+      $attr.class$("control-row control-row-ext control-row-music"),
+      $List$Empty$const,
+    ),
+    listPrepend(
+      $html.span(
+        listPrepend($attr.class$("control-label"), $List$Empty$const),
+        listPrepend($html.text("Music"), $List$Empty$const),
+      ),
+      listPrepend(
+        $html.div(
+          listPrepend(
+            $attr.class$("ext-controls music-controls"),
+            $List$Empty$const,
+          ),
+          listPrepend(
+            $html.button(
+              listPrepend(
+                $attr.class$(
+                  (() => {
+                    let $1 = model.music_on;
+                    if ($1) {
+                      return "ext-btn ext-btn-on";
+                    } else {
+                      return "ext-btn";
+                    }
+                  })(),
+                ),
+                listPrepend(
+                  $attr.attribute("type", "button"),
+                  listPrepend(
+                    $attr.attribute("data-test-id", "music-toggle"),
+                    listPrepend(
+                      $event.on_click(Msg$ToggleMusic$const),
+                      $List$Empty$const,
+                    ),
+                  ),
+                ),
+              ),
+              listPrepend($html.text(play_label), $List$Empty$const),
+            ),
+            listPrepend(
+              $html.label(
+                listPrepend($attr.class$("ext-file-label"), $List$Empty$const),
+                listPrepend(
+                  $html.text("File"),
+                  listPrepend(
+                    $html.input(
+                      listPrepend(
+                        $attr.type_("file"),
+                        listPrepend(
+                          $attr.id("music-file"),
+                          listPrepend(
+                            $attr.attribute("data-test-id", "music-file"),
+                            listPrepend(
+                              $attr.attribute("accept", "audio/*"),
+                              listPrepend(
+                                $attr.class$("ext-file-input"),
+                                $List$Empty$const,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    $List$Empty$const,
+                  ),
+                ),
+              ),
+              listPrepend(
+                $html.label(
+                  listPrepend(
+                    $attr.class$("music-sens-label"),
+                    listPrepend(
+                      $attr.for$("music-sensitivity"),
+                      $List$Empty$const,
+                    ),
+                  ),
+                  listPrepend($html.text("Sens"), $List$Empty$const),
+                ),
+                listPrepend(
+                  $html.input(
+                    listPrepend(
+                      $attr.type_("range"),
+                      listPrepend(
+                        $attr.id("music-sensitivity"),
+                        listPrepend(
+                          $attr.attribute("data-test-id", "music-sensitivity"),
+                          listPrepend(
+                            $attr.class$("control-slider music-sens"),
+                            listPrepend(
+                              $attr.min("0.05"),
+                              listPrepend(
+                                $attr.max("1.5"),
+                                listPrepend(
+                                  $attr.step("0.05"),
+                                  listPrepend(
+                                    $attr.value(
+                                      $float.to_string(model.music_sensitivity),
+                                    ),
+                                    listPrepend(
+                                      $event.on_input(
+                                        (raw) => {
+                                          let $1 = $float.parse(raw);
+                                          if ($1 instanceof Ok) {
+                                            let s = $1[0];
+                                            return new SetMusicSensitivity(s);
+                                          } else {
+                                            let $2 = $int.parse(raw);
+                                            if ($2 instanceof Ok) {
+                                              let n = $2[0];
+                                              return new SetMusicSensitivity(
+                                                $int.to_float(n),
+                                              );
+                                            } else {
+                                              return new SetMusicSensitivity(
+                                                model.music_sensitivity,
+                                              );
+                                            }
+                                          }
+                                        },
+                                      ),
+                                      $List$Empty$const,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  listPrepend(
+                    $html.button(
+                      listPrepend(
+                        $attr.class$(
+                          (() => {
+                            let $1 = model.music_bass_link;
+                            if ($1) {
+                              return "ext-btn ext-btn-on";
+                            } else {
+                              return "ext-btn";
+                            }
+                          })(),
+                        ),
+                        listPrepend(
+                          $attr.attribute("type", "button"),
+                          listPrepend(
+                            $attr.attribute("data-test-id", "music-bass-link"),
+                            listPrepend(
+                              $attr.attribute(
+                                "title",
+                                "Map bass energy to the shape slider",
+                              ),
+                              listPrepend(
+                                $event.on_click(Msg$ToggleBassLink$const),
+                                $List$Empty$const,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      listPrepend($html.text("Bass→Shape"), $List$Empty$const),
+                    ),
+                    $List$Empty$const,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        listPrepend(
+          $html.span(
+            listPrepend($attr.class$("control-value"), $List$Empty$const),
+            listPrepend(
+              $html.text(format_sens(model.music_sensitivity)),
+              $List$Empty$const,
+            ),
+          ),
+          $List$Empty$const,
+        ),
+      ),
+    ),
+  );
+}
+
+function view_duel_row(model) {
+  let _block;
+  let $ = model.duel_on;
+  if ($) {
+    _block = "Exit duel";
+  } else {
+    _block = "Mirror duel";
+  }
+  let toggle_label = _block;
+  return $html.div(
+    listPrepend($attr.class$("control-row control-row-ext"), $List$Empty$const),
+    listPrepend(
+      $html.span(
+        listPrepend($attr.class$("control-label"), $List$Empty$const),
+        listPrepend($html.text("Duel"), $List$Empty$const),
+      ),
+      listPrepend(
+        $html.div(
+          listPrepend($attr.class$("ext-controls"), $List$Empty$const),
+          listPrepend(
+            $html.button(
+              listPrepend(
+                $attr.class$(
+                  (() => {
+                    let $1 = model.duel_on;
+                    if ($1) {
+                      return "ext-btn ext-btn-on";
+                    } else {
+                      return "ext-btn";
+                    }
+                  })(),
+                ),
+                listPrepend(
+                  $attr.attribute("type", "button"),
+                  listPrepend(
+                    $attr.attribute("data-test-id", "duel-toggle"),
+                    listPrepend(
+                      $event.on_click(Msg$ToggleDuel$const),
+                      $List$Empty$const,
+                    ),
+                  ),
+                ),
+              ),
+              listPrepend($html.text(toggle_label), $List$Empty$const),
+            ),
+            listPrepend(
+              $html.button(
+                listPrepend(
+                  $attr.class$(
+                    (() => {
+                      let $1 = model.duel_on;
+                      let $2 = model.duel_mode;
+                      if ($1 && $2 instanceof VsAi) {
+                        return "ext-btn ext-btn-on";
+                      } else {
+                        return "ext-btn";
+                      }
+                    })(),
+                  ),
+                  listPrepend(
+                    $attr.attribute("type", "button"),
+                    listPrepend(
+                      $attr.attribute("data-test-id", "duel-mode-ai"),
+                      listPrepend(
+                        $attr.disabled(!model.duel_on),
+                        listPrepend(
+                          $event.on_click(new SetDuelMode(DuelMode$VsAi$const)),
+                          $List$Empty$const,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                listPrepend($html.text("vs AI"), $List$Empty$const),
+              ),
+              listPrepend(
+                $html.button(
+                  listPrepend(
+                    $attr.class$(
+                      (() => {
+                        let $1 = model.duel_on;
+                        let $2 = model.duel_mode;
+                        if ($1 && $2 instanceof Hotseat) {
+                          return "ext-btn ext-btn-on";
+                        } else {
+                          return "ext-btn";
+                        }
+                      })(),
+                    ),
+                    listPrepend(
+                      $attr.attribute("type", "button"),
+                      listPrepend(
+                        $attr.attribute("data-test-id", "duel-mode-hotseat"),
+                        listPrepend(
+                          $attr.disabled(!model.duel_on),
+                          listPrepend(
+                            $event.on_click(
+                              new SetDuelMode(DuelMode$Hotseat$const),
+                            ),
+                            $List$Empty$const,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  listPrepend($html.text("Hot-seat"), $List$Empty$const),
+                ),
+                $List$Empty$const,
+              ),
+            ),
+          ),
+        ),
+        listPrepend(
+          $html.span(
+            listPrepend(
+              $attr.class$("control-value ext-hint"),
+              $List$Empty$const,
+            ),
+            listPrepend(
+              $html.text(
+                (() => {
+                  let $1 = model.duel_on;
+                  let $2 = model.duel_mode;
+                  if ($1) {
+                    if ($2 instanceof VsAi) {
+                      return "WASD/Arrows";
+                    } else {
+                      return "WASD vs Arrows";
+                    }
+                  } else {
+                    return "";
+                  }
+                })(),
+              ),
+              $List$Empty$const,
+            ),
+          ),
+          $List$Empty$const,
+        ),
+      ),
+    ),
+  );
 }
 
 function format_speed(rate) {
@@ -576,7 +1351,13 @@ function view_speed_row(speed) {
                                       let rate = $[0];
                                       return new SetSpeed(rate);
                                     } else {
-                                      return new SetSpeed(speed);
+                                      let $1 = $int.parse(raw);
+                                      if ($1 instanceof Ok) {
+                                        let n = $1[0];
+                                        return new SetSpeed($int.to_float(n));
+                                      } else {
+                                        return new SetSpeed(speed);
+                                      }
                                     }
                                   },
                                 ),
@@ -680,7 +1461,8 @@ function view_shape_row(shape_slider) {
 }
 
 /**
- * Under-canvas strip: Shape → draw(shape_slider); Speed → set_speed(rate).
+ * Under-canvas strip: Shape → draw(shape_slider); Speed → set_speed(rate);
+ * plus Mirror duel + Music sync extension controls.
  * 
  * @ignore
  */
@@ -689,7 +1471,13 @@ function view_control_strip(model) {
     listPrepend($attr.class$("control-strip"), $List$Empty$const),
     listPrepend(
       view_shape_row(model.shape_slider),
-      listPrepend(view_speed_row(model.speed), $List$Empty$const),
+      listPrepend(
+        view_speed_row(model.speed),
+        listPrepend(
+          view_duel_row(model),
+          listPrepend(view_music_row(model), $List$Empty$const),
+        ),
+      ),
     ),
   );
 }
@@ -766,6 +1554,47 @@ function view_error_overlay(error) {
   }
 }
 
+function duel_hud_class(status) {
+  if (status === "CRASH — Space to rematch") {
+    return "duel-hud duel-hud-crash";
+  } else if (status === "YOU WIN — Space to rematch") {
+    return "duel-hud duel-hud-win";
+  } else if (status === "P1 WINS — Space to rematch") {
+    return "duel-hud duel-hud-win";
+  } else if (status === "AI WINS — Space to rematch") {
+    return "duel-hud duel-hud-lose";
+  } else if (status === "P2 WINS — Space to rematch") {
+    return "duel-hud duel-hud-lose";
+  } else {
+    return "duel-hud";
+  }
+}
+
+function view_duel_hud(model) {
+  let $ = model.duel_on;
+  if ($) {
+    let hud_class = duel_hud_class(model.duel_status);
+    return $html.div(
+      listPrepend(
+        $attr.class$(hud_class),
+        listPrepend(
+          $attr.attribute("data-test-id", "duel-hud"),
+          $List$Empty$const,
+        ),
+      ),
+      listPrepend(
+        $html.span(
+          listPrepend($attr.class$("duel-hud-label"), $List$Empty$const),
+          listPrepend($html.text(model.duel_status), $List$Empty$const),
+        ),
+        $List$Empty$const,
+      ),
+    );
+  } else {
+    return $element.none();
+  }
+}
+
 function view_reveal_code(model) {
   let $ = model.code_open;
   if ($) {
@@ -807,7 +1636,10 @@ function view_anim(model) {
                 listPrepend($attr.class$("canvas"), $List$Empty$const),
               ),
             ),
-            listPrepend(view_error_overlay(model.error), $List$Empty$const),
+            listPrepend(
+              view_duel_hud(model),
+              listPrepend(view_error_overlay(model.error), $List$Empty$const),
+            ),
           ),
         ),
         listPrepend(view_control_strip(model), $List$Empty$const),
@@ -853,15 +1685,15 @@ export function main() {
       "let_assert",
       FILEPATH,
       "app",
-      471,
+      824,
       "main",
       "Pattern match failed, no pattern matched the value.",
       {
         value: $,
-        start: 15204,
-        end: 15253,
-        pattern_start: 15215,
-        pattern_end: 15220
+        start: 25746,
+        end: 25795,
+        pattern_start: 25757,
+        pattern_end: 25762
       }
     )
   }

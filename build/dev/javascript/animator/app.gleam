@@ -46,7 +46,15 @@ const default_speed = 1.0
 /// Speed track spans this many× normal on each side of pause (0).
 const speed_max = 2.0
 
+/// Default music-sync sensitivity (0.05–1.5).
+const default_music_sensitivity = 0.55
+
 // ── Model ──────────────────────────────────────────────────────────────────────
+
+pub type DuelMode {
+  VsAi
+  Hotseat
+}
 
 pub type Model {
   Model(
@@ -63,6 +71,14 @@ pub type Model {
     speed: Float,
     // Saved drawings + which one is open (also mirrored in localStorage).
     library: Library,
+    // Extension 6: mirror duel on the current path.
+    duel_on: Bool,
+    duel_mode: DuelMode,
+    duel_status: String,
+    // Extension 10: music sync.
+    music_on: Bool,
+    music_sensitivity: Float,
+    music_bass_link: Bool,
   )
 }
 
@@ -86,10 +102,61 @@ pub type Msg {
   // Drawing library menu (`data-test-id="drawing-select"`).
   // Empty string = create-new option.
   SelectDrawing(String)
+
+  // Mirror duel
+  ToggleDuel
+  SetDuelMode(DuelMode)
+  DuelStatus(String)
+
+  // Music sync
+  ToggleMusic
+  MusicPlaying(Bool)
+  SetMusicSensitivity(Float)
+  ToggleBassLink
+  MusicBass(Int)
 }
 
 @external(javascript, "./app_ffi.mjs", "listenEscape")
 fn listen_escape(on_escape: fn() -> Nil) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "setDuelEnabled")
+fn set_duel_enabled(on: Bool) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "setDuelMode")
+fn set_duel_mode_js(mode: String) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "listenDuelStatus")
+fn listen_duel_status(on_status: fn(String) -> Nil) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "setMusicSensitivity")
+fn set_music_sensitivity_js(s: Float) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "setMusicBassLink")
+fn set_music_bass_link_js(on: Bool) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "setMusicBaseSpeed")
+fn set_music_base_speed_js(rate: Float) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "wireMusicCallbacks")
+fn wire_music_callbacks(
+  on_bass: fn(Int) -> Nil,
+  on_pulse: fn(Float) -> Nil,
+) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "toggleMusic")
+fn toggle_music_js() -> Nil
+
+@external(javascript, "./app_ffi.mjs", "pauseMusic")
+fn pause_music_js() -> Nil
+
+@external(javascript, "./app_ffi.mjs", "useBuiltinMusic")
+fn use_builtin_music_js() -> Nil
+
+@external(javascript, "./app_ffi.mjs", "bindMusicFileInput")
+fn bind_music_file_input(id: String) -> Nil
+
+@external(javascript, "./app_ffi.mjs", "bindMusicPlayGesture")
+fn bind_music_play_gesture() -> Nil
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 
@@ -107,6 +174,12 @@ pub fn init(_flags: Nil) -> #(Model, Effect(Msg)) {
       shape_slider: default_shape_slider,
       speed: default_speed,
       library:,
+      duel_on: False,
+      duel_mode: VsAi,
+      duel_status: "",
+      music_on: False,
+      music_sensitivity: default_music_sensitivity,
+      music_bass_link: False,
     )
   // Mount + open the restored drawing. On parse/eval failure: show code +
   // overlay and clear the canvas (no stale paths).
@@ -116,12 +189,30 @@ pub fn init(_flags: Nil) -> #(Model, Effect(Msg)) {
       editor.mount(source, SetCode),
       effect.from(fn(dispatch) { dispatch(OpenDrawing(source)) }),
       listen_esc(),
+      wire_extensions(),
     ]),
   )
 }
 
 fn listen_esc() -> Effect(Msg) {
   effect.from(fn(dispatch) { listen_escape(fn() { dispatch(DismissError) }) })
+}
+
+fn wire_extensions() -> Effect(Msg) {
+  effect.from(fn(dispatch) {
+    listen_duel_status(fn(label) { dispatch(DuelStatus(label)) })
+    set_music_sensitivity_js(default_music_sensitivity)
+    set_music_base_speed_js(default_speed)
+    wire_music_callbacks(
+      fn(shape) { dispatch(MusicBass(shape)) },
+      // Pulse updates canvas speed in JS; Gleam keeps the user base rate.
+      fn(_) { Nil },
+    )
+    bind_music_file_input("music-file")
+    // Unlock AudioContext on the Play click itself (capture), before Lustre effects.
+    bind_music_play_gesture()
+    use_builtin_music_js()
+  })
 }
 
 // Parse and evaluate a draw function at the given shape-slider value, returning
@@ -169,6 +260,13 @@ fn persist_soon(library: Library) -> Effect(Msg) {
 
 fn persist_now(library: Library) -> Effect(Msg) {
   effect.from(fn(_) { data.save_now(library) })
+}
+
+fn duel_mode_name(mode: DuelMode) -> String {
+  case mode {
+    VsAi -> "ai"
+    Hotseat -> "hotseat"
+  }
 }
 
 // ── Update ─────────────────────────────────────────────────────────────────────
@@ -232,12 +330,92 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     // Speed slider: bipolar rate; midpoint ≈ 0 pauses.
     SetSpeed(rate) -> #(
       Model(..model, speed: rate),
-      effect.from(fn(_) { render.set_speed(rate) }),
+      effect.from(fn(_) {
+        render.set_speed(rate)
+        set_music_base_speed_js(rate)
+      }),
     )
 
     SelectDrawing("") -> handle_create_new(model)
 
     SelectDrawing(name) -> switch_to_drawing(model, name)
+
+    ToggleDuel -> {
+      let on = !model.duel_on
+      #(
+        Model(..model, duel_on: on, duel_status: case on {
+          True -> "Mirror duel · WASD or Arrows · Space rematch"
+          False -> ""
+        }),
+        effect.from(fn(_) {
+          set_duel_enabled(on)
+          set_duel_mode_js(duel_mode_name(model.duel_mode))
+        }),
+      )
+    }
+
+    SetDuelMode(mode) -> #(
+      Model(..model, duel_mode: mode),
+      effect.from(fn(_) { set_duel_mode_js(duel_mode_name(mode)) }),
+    )
+
+    DuelStatus(label) -> #(Model(..model, duel_status: label), effect.none())
+
+    ToggleMusic -> #(
+      model,
+      effect.from(fn(dispatch) {
+        // toggleMusic is async in JS; fire-and-forget then flip from callback
+        // by reading playing state via a small delay is awkward, so we optimistically
+        // toggle and let MusicPlaying correct if needed.
+        let next = !model.music_on
+        case next {
+          True -> {
+            toggle_music_js()
+            dispatch(MusicPlaying(True))
+          }
+          False -> {
+            pause_music_js()
+            dispatch(MusicPlaying(False))
+          }
+        }
+      }),
+    )
+
+    MusicPlaying(on) -> #(Model(..model, music_on: on), effect.none())
+
+    SetMusicSensitivity(s) -> #(
+      Model(..model, music_sensitivity: s),
+      effect.from(fn(_) { set_music_sensitivity_js(s) }),
+    )
+
+    ToggleBassLink -> {
+      let on = !model.music_bass_link
+      #(
+        Model(..model, music_bass_link: on),
+        effect.from(fn(_) { set_music_bass_link_js(on) }),
+      )
+    }
+
+    // Optional bass → shape_slider (only while music + bass-link are on).
+    MusicBass(value) ->
+      case model.music_on && model.music_bass_link {
+        False -> #(model, effect.none())
+        True ->
+          case value == model.shape_slider {
+            True -> #(model, effect.none())
+            False ->
+              case run_source(value, model.source) {
+                Ok(paths) -> #(
+                  Model(..model, error: "", shape_slider: value),
+                  paint_paths(paths, False),
+                )
+                Error(msg) -> #(
+                  Model(..model, error: msg, shape_slider: value),
+                  effect.none(),
+                )
+              }
+          }
+      }
   }
 }
 
@@ -333,17 +511,52 @@ fn view_anim(model: Model) -> Element(Msg) {
     view_reveal_code(model),
     html.div([attr.class("canvas-stage")], [
       html.canvas([attr.id("animation-canvas"), attr.class("canvas")]),
+      view_duel_hud(model),
       view_error_overlay(model.error),
     ]),
     view_control_strip(model),
   ])
 }
 
-/// Under-canvas strip: Shape → draw(shape_slider); Speed → set_speed(rate).
+fn view_duel_hud(model: Model) -> Element(Msg) {
+  case model.duel_on {
+    False -> element.none()
+    True -> {
+      let hud_class = duel_hud_class(model.duel_status)
+      html.div(
+        [
+          attr.class(hud_class),
+          attr.attribute("data-test-id", "duel-hud"),
+        ],
+        [
+          html.span([attr.class("duel-hud-label")], [
+            html.text(model.duel_status),
+          ]),
+        ],
+      )
+    }
+  }
+}
+
+fn duel_hud_class(status: String) -> String {
+  case status {
+    "CRASH — Space to rematch" -> "duel-hud duel-hud-crash"
+    "YOU WIN — Space to rematch" -> "duel-hud duel-hud-win"
+    "P1 WINS — Space to rematch" -> "duel-hud duel-hud-win"
+    "AI WINS — Space to rematch" -> "duel-hud duel-hud-lose"
+    "P2 WINS — Space to rematch" -> "duel-hud duel-hud-lose"
+    _ -> "duel-hud"
+  }
+}
+
+/// Under-canvas strip: Shape → draw(shape_slider); Speed → set_speed(rate);
+/// plus Mirror duel + Music sync extension controls.
 fn view_control_strip(model: Model) -> Element(Msg) {
   html.div([attr.class("control-strip")], [
     view_shape_row(model.shape_slider),
     view_speed_row(model.speed),
+    view_duel_row(model),
+    view_music_row(model),
   ])
 }
 
@@ -390,9 +603,15 @@ fn view_speed_row(speed: Float) -> Element(Msg) {
         attr.step("0.1"),
         attr.value(float.to_string(speed)),
         event.on_input(fn(raw) {
+          // Range inputs often stringify whole numbers as "2" / "-2" with no
+          // decimal. gleam/float.parse requires "\d+.\d+", so fall back to int.
           case float.parse(raw) {
             Ok(rate) -> SetSpeed(rate)
-            Error(_) -> SetSpeed(speed)
+            Error(_) ->
+              case int.parse(raw) {
+                Ok(n) -> SetSpeed(int.to_float(n))
+                Error(_) -> SetSpeed(speed)
+              }
           }
         }),
       ]),
@@ -406,8 +625,142 @@ fn view_speed_row(speed: Float) -> Element(Msg) {
   ])
 }
 
+fn view_duel_row(model: Model) -> Element(Msg) {
+  let toggle_label = case model.duel_on {
+    True -> "Exit duel"
+    False -> "Mirror duel"
+  }
+  html.div([attr.class("control-row control-row-ext")], [
+    html.span([attr.class("control-label")], [html.text("Duel")]),
+    html.div([attr.class("ext-controls")], [
+      html.button(
+        [
+          attr.class(case model.duel_on {
+            True -> "ext-btn ext-btn-on"
+            False -> "ext-btn"
+          }),
+          attr.attribute("type", "button"),
+          attr.attribute("data-test-id", "duel-toggle"),
+          event.on_click(ToggleDuel),
+        ],
+        [html.text(toggle_label)],
+      ),
+      html.button(
+        [
+          attr.class(case model.duel_on, model.duel_mode {
+            True, VsAi -> "ext-btn ext-btn-on"
+            _, _ -> "ext-btn"
+          }),
+          attr.attribute("type", "button"),
+          attr.attribute("data-test-id", "duel-mode-ai"),
+          attr.disabled(!model.duel_on),
+          event.on_click(SetDuelMode(VsAi)),
+        ],
+        [html.text("vs AI")],
+      ),
+      html.button(
+        [
+          attr.class(case model.duel_on, model.duel_mode {
+            True, Hotseat -> "ext-btn ext-btn-on"
+            _, _ -> "ext-btn"
+          }),
+          attr.attribute("type", "button"),
+          attr.attribute("data-test-id", "duel-mode-hotseat"),
+          attr.disabled(!model.duel_on),
+          event.on_click(SetDuelMode(Hotseat)),
+        ],
+        [html.text("Hot-seat")],
+      ),
+    ]),
+    html.span([attr.class("control-value ext-hint")], [
+      html.text(case model.duel_on, model.duel_mode {
+        True, Hotseat -> "WASD vs Arrows"
+        True, VsAi -> "WASD/Arrows"
+        False, _ -> ""
+      }),
+    ]),
+  ])
+}
+
+fn view_music_row(model: Model) -> Element(Msg) {
+  let play_label = case model.music_on {
+    True -> "Pause"
+    False -> "Play"
+  }
+  html.div([attr.class("control-row control-row-ext control-row-music")], [
+    html.span([attr.class("control-label")], [html.text("Music")]),
+    html.div([attr.class("ext-controls music-controls")], [
+      html.button(
+        [
+          attr.class(case model.music_on {
+            True -> "ext-btn ext-btn-on"
+            False -> "ext-btn"
+          }),
+          attr.attribute("type", "button"),
+          attr.attribute("data-test-id", "music-toggle"),
+          event.on_click(ToggleMusic),
+        ],
+        [html.text(play_label)],
+      ),
+      html.label([attr.class("ext-file-label")], [
+        html.text("File"),
+        html.input([
+          attr.type_("file"),
+          attr.id("music-file"),
+          attr.attribute("data-test-id", "music-file"),
+          attr.attribute("accept", "audio/*"),
+          attr.class("ext-file-input"),
+        ]),
+      ]),
+      html.label([attr.class("music-sens-label"), attr.for("music-sensitivity")], [
+        html.text("Sens"),
+      ]),
+      html.input([
+        attr.type_("range"),
+        attr.id("music-sensitivity"),
+        attr.attribute("data-test-id", "music-sensitivity"),
+        attr.class("control-slider music-sens"),
+        attr.min("0.05"),
+        attr.max("1.5"),
+        attr.step("0.05"),
+        attr.value(float.to_string(model.music_sensitivity)),
+        event.on_input(fn(raw) {
+          case float.parse(raw) {
+            Ok(s) -> SetMusicSensitivity(s)
+            Error(_) ->
+              case int.parse(raw) {
+                Ok(n) -> SetMusicSensitivity(int.to_float(n))
+                Error(_) -> SetMusicSensitivity(model.music_sensitivity)
+              }
+          }
+        }),
+      ]),
+      html.button(
+        [
+          attr.class(case model.music_bass_link {
+            True -> "ext-btn ext-btn-on"
+            False -> "ext-btn"
+          }),
+          attr.attribute("type", "button"),
+          attr.attribute("data-test-id", "music-bass-link"),
+          attr.attribute("title", "Map bass energy to the shape slider"),
+          event.on_click(ToggleBassLink),
+        ],
+        [html.text("Bass→Shape")],
+      ),
+    ]),
+    html.span([attr.class("control-value")], [
+      html.text(format_sens(model.music_sensitivity)),
+    ]),
+  ])
+}
+
 fn format_speed(rate: Float) -> String {
   float.to_string(rate) <> "×"
+}
+
+fn format_sens(s: Float) -> String {
+  float.to_string(s)
 }
 
 /// Semi-transparent toast centered over the canvas. Backdrop click or the

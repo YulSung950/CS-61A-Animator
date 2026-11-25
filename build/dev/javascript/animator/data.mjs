@@ -19,6 +19,7 @@ import {
   List$Empty$const as $List$Empty$const,
   prepend as listPrepend,
   CustomType as $CustomType,
+  isEqual,
 } from "./gleam.mjs";
 
 export {
@@ -216,6 +217,27 @@ export function seed_from_examples() {
 }
 
 /**
+ * Merge any example drawings missing from a stored library (e.g. new seeds
+ * like `circle_spiral`) so they show up in drawing-select without wiping edits.
+ */
+export function merge_example_seeds(drawings) {
+  return $list.fold(
+    $examples.all,
+    drawings,
+    (acc, entry) => {
+      let name = entry[0];
+      let source = entry[1];
+      let $ = find_source(acc, name);
+      if ($ instanceof Ok) {
+        return acc;
+      } else {
+        return $list.append(acc, listPrepend([name, source], $List$Empty$const));
+      }
+    },
+  );
+}
+
+/**
  * Load the library from localStorage, or seed from examples when missing.
  */
 export function load() {
@@ -225,7 +247,15 @@ export function load() {
     let $1 = decode(raw);
     if ($1 instanceof Ok) {
       let library = $1[0];
-      return library;
+      let drawings = merge_example_seeds(library.drawings);
+      let $2 = isEqual(drawings, library.drawings);
+      if ($2) {
+        return library;
+      } else {
+        let library$1 = new Library(drawings, library.current);
+        persist_now(library_key, encode(library$1));
+        return library$1;
+      }
     } else {
       return seed_from_examples();
     }
