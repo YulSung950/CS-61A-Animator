@@ -19,6 +19,15 @@ let clock = 0; // the drawing's time, in tenths of a second, in [0, endClock]
 let lastTs = 0;
 let running = false;
 let framesWithoutCanvas = 0;
+// Music-sync stroke boost (1 = normal). Applied when stroking paths.
+let strokeBrightness = 1;
+// Mirror-duel hooks (filled by duel.mjs).
+let duelHooks = {
+  onDrawing: null,
+  tick: null,
+  draw: null,
+  isActive: null,
+};
 
 const TENTHS_PER_SECOND = 10;
 // How many frames (about 10 seconds' worth) to wait for the canvas to appear
@@ -46,6 +55,7 @@ export function setDrawing(pathList) {
   // `endClock` is the moment the last path finishes drawing, past which the frame
   // loop holds time still (see frame).
   drawing = { paths, endClock: drawingEndClock(paths) };
+  if (duelHooks.onDrawing) duelHooks.onDrawing(paths);
   if (!running) {
     running = true;
     lastTs = performance.now();
@@ -70,6 +80,14 @@ export function setSpeed(r) {
   rate = r;
 }
 
+export function setStrokeBrightness(b) {
+  strokeBrightness = Math.max(0.2, Math.min(3.5, Number(b) || 1));
+}
+
+export function setDuelHooks(hooks) {
+  duelHooks = { ...duelHooks, ...hooks };
+}
+
 // Jump the animation back to the start (empty canvas).
 export function resetClock() {
   clock = 0;
@@ -86,6 +104,7 @@ function frame(ts) {
   // a finished drawing.
   clock += dt * rate * TENTHS_PER_SECOND;
   clock = clamp(clock, 0, drawing.endClock);
+  if (duelHooks.tick) duelHooks.tick(dt);
   render();
   requestAnimationFrame(frame);
 }
@@ -133,18 +152,21 @@ function render() {
   ctx.setTransform(w / 1000, 0, 0, h / 1000, w / 2, h / 2);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  const duelOn = duelHooks.isActive && duelHooks.isActive();
   for (const p of drawing.paths) {
     // Each path is revealed by a parameter u ∈ [0, 1] that advances at a steady
     // rate. A path is complete once u reaches 1.
-    const u = penU(p);
+    // In duel mode the full track is shown so riders have a complete course.
+    const u = duelOn ? 1 : penU(p);
     // `u` clamps to 0 both before a path starts and at the very instant it
     // does, so it can't tell "not yet" from "just begun". Gate on the start
     // time instead, so a just-begun path is shown at rest at u = 0
     // rather than staying hidden until the clock advances.
-    if (clock >= p.start) {
+    if (duelOn || clock >= p.start) {
       drawUpToU(p, u);
     }
   }
+  if (duelOn && duelHooks.draw) duelHooks.draw(ctx);
 }
 
 // How much of a path is revealed now: its parameter u ∈ [0, 1], advancing
@@ -160,6 +182,17 @@ function penU(p) {
 
 function clamp(x, lo, hi) {
   return x < lo ? lo : x > hi ? hi : x;
+}
+
+function brightenColor(color, mult) {
+  if (!color || mult === 1) return color;
+  const m = String(color).match(/^#([0-9a-fA-F]{6})$/);
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  const r = Math.min(255, Math.round(((n >> 16) & 255) * mult));
+  const g = Math.min(255, Math.round(((n >> 8) & 255) * mult));
+  const b = Math.min(255, Math.round((n & 255) * mult));
+  return `rgb(${r},${g},${b})`;
 }
 
 // Stroke the first `u` fraction of a path's polyline, interpolating the final
@@ -183,7 +216,6 @@ function drawUpToU(p, u) {
     ctx.lineTo(ax + (bx - ax) * frac, ay + (by - ay) * frac);
   }
   ctx.lineWidth = p.thickness;
-  ctx.strokeStyle = p.color;
+  ctx.strokeStyle = brightenColor(p.color, strokeBrightness);
   ctx.stroke();
 }
-

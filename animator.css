@@ -357,3 +357,113 @@ html, body { width: 100%; height: 100%; overflow: hidden; }
   background: #4a3040;
 }
 
+
+/* ── Extensions: Mirror duel + Music sync ───────────────────────────────── */
+
+.duel-hud {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  pointer-events: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #4a6a8a;
+  background: rgba(12, 18, 32, 0.82);
+  color: #cfe8ff;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.duel-hud-label {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.control-row-ext {
+  grid-template-columns: 52px 1fr 56px;
+}
+
+.ext-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ext-btn {
+  appearance: none;
+  border: 1px solid #4a4a8a;
+  background: #2a2a4a;
+  color: #d4c5a0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.ext-btn:hover:not(:disabled) {
+  background: #3a3a5e;
+}
+.ext-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ext-btn-on {
+  border-color: #6a9aca;
+  background: #2a3a5a;
+  color: #d0e8ff;
+}
+
+.ext-hint {
+  color: #8a9aaa;
+  font-size: 11px;
+}
+
+.music-controls {
+  gap: 8px;
+}
+
+.music-sens-label {
+  color: #8a9aaa;
+  font-size: 11px;
+}
+
+.music-sens {
+  max-width: 90px;
+  flex: 1;
+  min-width: 60px;
+}
+
+.ext-file-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #4a4a8a;
+  background: #2a2a4a;
+  color: #d4c5a0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ext-file-label:hover {
+  background: #3a3a5e;
+}
+.ext-file-input {
+  width: 0.1px;
+  height: 0.1px;
+  opacity: 0;
+  overflow: hidden;
+  position: absolute;
+  z-index: -1;
+}
+
+.control-row-music .ext-controls {
+  align-items: center;
+}

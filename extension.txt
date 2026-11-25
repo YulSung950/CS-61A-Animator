@@ -1,1 +1,18 @@
-Describe your extension(s) here before implementing them.
+Extension 6 — Mirror duel. After any successful draw, the animator builds an
+arc-length track from the current paths. Entering Mirror duel (under-canvas
+toggle) shows the full course and places two riders on it: the player starts at
+the beginning and rides forward with A/D or the arrow keys; the opponent starts
+at the end and rides backward. The default opponent is a reactive AI that closes
+the gap; Hot-seat switches the mirror rider to a second keyboard (J/L). When the
+riders collide, the round ends with a spark burst and a CRASH banner; Space
+starts a rematch. Exiting duel restores normal timed reveal of the drawing.
+Drawing select, shape/speed sliders, error overlay, and clock reset on code
+change keep working while duel mode is off or on.
+
+Extension 10 — Music sync. A Web Audio pipeline plays a short built-in kick/hat
+loop (or a user-chosen audio file). An AnalyserNode measures energy each frame:
+beats pulse set_speed briefly and brighten stroke colors on the canvas;
+sensitivity is adjustable next to Play/Pause on the under-canvas strip. Optional
+Bass→Shape maps low-band energy onto the shape slider so the drawing morphs with
+the bass while music plays. Pausing restores the user-chosen base speed and
+normal brightness without disturbing the duel or Q1–Q3 controls.
