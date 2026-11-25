@@ -516,10 +516,31 @@ fn view_anim(model: Model) -> Element(Msg) {
 fn view_duel_hud(model: Model) -> Element(Msg) {
   case model.duel_on {
     False -> element.none()
-    True ->
-      html.div([attr.class("duel-hud"), attr.attribute("data-test-id", "duel-hud")], [
-        html.span([attr.class("duel-hud-label")], [html.text(model.duel_status)]),
-      ])
+    True -> {
+      let hud_class = duel_hud_class(model.duel_status)
+      html.div(
+        [
+          attr.class(hud_class),
+          attr.attribute("data-test-id", "duel-hud"),
+        ],
+        [
+          html.span([attr.class("duel-hud-label")], [
+            html.text(model.duel_status),
+          ]),
+        ],
+      )
+    }
+  }
+}
+
+fn duel_hud_class(status: String) -> String {
+  case status {
+    "CRASH — Space to rematch" -> "duel-hud duel-hud-crash"
+    "YOU WIN — Space to rematch" -> "duel-hud duel-hud-win"
+    "P1 WINS — Space to rematch" -> "duel-hud duel-hud-win"
+    "AI WINS — Space to rematch" -> "duel-hud duel-hud-lose"
+    "P2 WINS — Space to rematch" -> "duel-hud duel-hud-lose"
+    _ -> "duel-hud"
   }
 }
 

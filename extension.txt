@@ -8,18 +8,24 @@ W or Up advances forward along the current path while held and stops when
 released; S or Down moves backward while held and stops when released; A/D or
 Left/Right steer onto a new branch at a split, and when no turn key is held the
 rider prefers the furthest-right outgoing path by default. In vs-AI mode either
-WASD or the arrow keys steer the player against a reactive AI. Hot-seat is
-player-versus-player with separated bindings: WASD controls one rider and the
-arrow keys control the other, so both schemes no longer drive the same rider.
-Collision ends the round with a spark burst and a CRASH banner; Space rematches.
-Exiting duel restores the normal timed reveal. Drawing select (including the
-circle_spiral library seed), shape/speed sliders, error overlay, and clock
-reset on code change keep working with duel on or off.
+WASD or the arrow keys steer the player against a reactive AI that advances
+along the graph (BFS toward the player at forks, furthest-right on ties) so it
+races toward the start on branched maps such as tree instead of stalling on a leaf.
+Hot-seat is player-versus-player with separated bindings: WASD controls one
+rider and the arrow keys control the other, so both schemes no longer drive the
+same rider. Collision ends the round with a spark burst and a CRASH banner;
+reaching the far end awards a clear on-screen winner (YOU WIN / AI WINS, or
+P1 WINS / P2 WINS in hot-seat); Space rematches. Exiting duel restores the
+normal timed reveal. Drawing select (including the circle_spiral library seed),
+shape/speed sliders, error overlay, and clock reset on code change keep working
+with duel on or off.
 
 Extension 10 — Music sync. A Web Audio pipeline plays a short built-in kick/hat
-loop (or a user-chosen audio file). An AnalyserNode measures energy each frame:
-beats pulse set_speed briefly and brighten stroke colors on the canvas;
-sensitivity is adjustable next to Play/Pause on the under-canvas strip. Optional
-Bass→Shape maps low-band energy onto the shape slider so the drawing morphs with
-the bass while music plays. Pausing restores the user-chosen base speed and
-normal brightness without disturbing the duel or Q1–Q3 controls.
+loop (or a user-chosen audio file). The AudioContext is created and resumed on
+the Play click so browser autoplay policies allow audible output; pointer and
+key gestures also resume a suspended context. An AnalyserNode measures energy
+each frame: beats pulse set_speed briefly and brighten stroke colors on the
+canvas; sensitivity is adjustable next to Play/Pause on the under-canvas strip.
+Optional Bass→Shape maps low-band energy onto the shape slider so the drawing
+morphs with the bass while music plays. Pausing restores the user-chosen base
+speed and normal brightness without disturbing the duel or Q1–Q3 controls.
