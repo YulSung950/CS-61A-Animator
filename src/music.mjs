@@ -2,8 +2,11 @@
 // AnalyserNode energy pulses stroke brightness and set_speed; optional bass
 // band drives the shape slider via a Gleam callback.
 //
-// AudioContext is created lazily on the Play click (user gesture) so browsers
-// allow audible output; we also resume() before every start.
+// Silence root cause (post PR #7): Play ran inside a Lustre effect *after* the
+// click gesture ended, so AudioContext stayed suspended / never unlocked under
+// autoplay policy. Fix: capture-phase unlock on the Play button, resume before
+// start, and always emit an OscillatorNode beep so the user hears sound even if
+// the buffer loop is still building.
 
 import { setSpeed, setStrokeBrightness } from "./canvas.mjs";
 
@@ -22,6 +25,7 @@ let onBass = null;
 let onPulse = null;
 let usingBuiltin = true;
 let unlockArmed = false;
+let gestureBound = false;
 
 const BUILTIN_BPM = 96;
 
@@ -46,6 +50,37 @@ export function isPlaying() {
   return playing;
 }
 
+/**
+ * Capture-phase click on the Music Play/Pause button so AudioContext is
+ * created/resumed inside the real user gesture (Lustre effects run too late).
+ */
+export function bindPlayGesture(testId = "music-toggle") {
+  if (gestureBound || typeof document === "undefined") return;
+  gestureBound = true;
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      const el = event.target;
+      if (!el || typeof el.closest !== "function") return;
+      if (!el.closest(`[data-test-id="${testId}"]`)) return;
+      unlockSync();
+    },
+    true,
+  );
+  document.addEventListener(
+    "click",
+    (event) => {
+      const el = event.target;
+      if (!el || typeof el.closest !== "function") return;
+      if (!el.closest(`[data-test-id="${testId}"]`)) return;
+      // Second chance on click (some environments deliver click without prior
+      // pointerdown to the same target). Still inside the gesture.
+      unlockSync();
+    },
+    true,
+  );
+}
+
 /** Create the Web Audio graph on first use (should be during a user gesture). */
 function ensureCtx() {
   if (!audioCtx) {
@@ -59,8 +94,9 @@ function ensureCtx() {
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.7;
     gainNode = audioCtx.createGain();
-    // Audible but not clipping; browser autoplay policies mute until resume.
-    gainNode.gain.value = 0.85;
+    // Comfortable level; not muted. Autoplay only blocks until resume().
+    gainNode.gain.value = 0.9;
+    // Single audible path: gain → analyser → destination (analyser does not mute).
     gainNode.connect(analyser);
     analyser.connect(audioCtx.destination);
     armGestureUnlock();
@@ -68,7 +104,18 @@ function ensureCtx() {
   return audioCtx;
 }
 
-/** Resume a suspended AudioContext from a subsequent user gesture if needed. */
+/** Synchronous unlock for use inside pointer/click handlers. */
+export function unlockSync() {
+  const ctx = ensureCtx();
+  if (!ctx) return null;
+  if (ctx.state === "suspended") {
+    // Do not await — starting resume() during the gesture is what matters.
+    ctx.resume().catch(() => {});
+  }
+  return ctx;
+}
+
+/** Resume a suspended AudioContext; safe to call from async play(). */
 function armGestureUnlock() {
   if (unlockArmed || typeof window === "undefined") return;
   unlockArmed = true;
@@ -95,13 +142,35 @@ async function resumeCtx() {
 }
 
 /**
+ * Immediate audible proof via OscillatorNode (no buffer / file / CORS).
+ * Runs fully synchronously so it still works right after a gesture unlock.
+ */
+function playBeep(freq = 660, seconds = 0.16, peak = 0.55) {
+  const ctx = ensureCtx();
+  if (!ctx || !gainNode) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const env = ctx.createGain();
+  osc.type = "square";
+  osc.frequency.setValueAtTime(freq, now);
+  env.gain.setValueAtTime(0.0001, now);
+  env.gain.exponentialRampToValueAtTime(peak, now + 0.01);
+  env.gain.exponentialRampToValueAtTime(0.0001, now + seconds);
+  osc.connect(env);
+  env.connect(gainNode);
+  try {
+    osc.start(now);
+    osc.stop(now + seconds + 0.02);
+  } catch (err) {
+    console.warn("Oscillator beep failed:", err);
+  }
+}
+
+/**
  * Procedural 2-bar kick/hat loop as an AudioBuffer (no external asset).
  * Only builds once we have a live AudioContext (sampleRate from the device).
  */
-async function ensureBuiltinBuffer() {
-  const ctx = ensureCtx();
-  if (!ctx) return null;
-  if (buffer && usingBuiltin) return buffer;
+function buildBuiltinBuffer(ctx) {
   const bpm = BUILTIN_BPM;
   const beats = 8;
   const duration = (60 / bpm) * beats;
@@ -125,14 +194,14 @@ async function ensureBuiltinBuffer() {
       for (let i = 0; i < rate * 0.05; i++) {
         const t = i / rate;
         const env = Math.exp(-t * 60);
-        ch[t0 + i] += env * (Math.random() * 2 - 1) * 0.3;
+        ch[t0 + i] += env * (Math.random() * 2 - 1) * 0.35;
       }
     }
     // Soft mid tone every 4 beats
     if (b % 4 === 0) {
       for (let i = 0; i < rate * 0.35; i++) {
         const t = i / rate;
-        const env = Math.exp(-t * 4) * 0.4;
+        const env = Math.exp(-t * 4) * 0.45;
         ch[t0 + i] += env * Math.sin(2 * Math.PI * 220 * t);
       }
     }
@@ -141,7 +210,14 @@ async function ensureBuiltinBuffer() {
   for (let i = 0; i < n; i++) {
     ch[i] = Math.tanh(ch[i]);
   }
-  buffer = data;
+  return data;
+}
+
+async function ensureBuiltinBuffer() {
+  const ctx = ensureCtx();
+  if (!ctx) return null;
+  if (buffer && usingBuiltin) return buffer;
+  buffer = buildBuiltinBuffer(ctx);
   usingBuiltin = true;
   return buffer;
 }
@@ -149,6 +225,8 @@ async function ensureBuiltinBuffer() {
 export async function loadUserFile(file) {
   const ctx = await resumeCtx();
   if (!ctx) return;
+  // File picker ArrayBuffers have no CORS; decode into a BufferSource loop.
+  // (Avoid MediaElementSource — remote/file elements often stay silent with CORS.)
   const arr = await file.arrayBuffer();
   buffer = await ctx.decodeAudioData(arr.slice(0));
   usingBuiltin = false;
@@ -159,10 +237,22 @@ export async function loadUserFile(file) {
 }
 
 export async function play() {
+  // Prefer any gesture unlock already done; resume again if still suspended.
+  unlockSync();
   const ctx = await resumeCtx();
   if (!ctx) return false;
-  if (!buffer) await ensureBuiltinBuffer();
-  if (!buffer) return false;
+
+  // Always beep first so Play is audibly confirmed even if the loop fails.
+  playBeep(720, 0.14, 0.6);
+
+  if (!buffer) {
+    try {
+      await ensureBuiltinBuffer();
+    } catch (err) {
+      console.warn("Builtin buffer build failed:", err);
+    }
+  }
+
   // Resume again right before start — some browsers re-suspend between awaits.
   if (ctx.state === "suspended") {
     try {
@@ -171,8 +261,14 @@ export async function play() {
       /* ignore */
     }
   }
+
   stopSource();
-  startSource();
+  if (buffer) {
+    startSource();
+  } else {
+    // Reliable fallback: keep a soft pulse tone looping via oscillators.
+    startFallbackToneLoop();
+  }
   playing = true;
   loopAnalyse();
   return true;
@@ -180,6 +276,7 @@ export async function play() {
 
 export function pause() {
   stopSource();
+  stopFallbackTone();
   playing = false;
   if (raf) cancelAnimationFrame(raf);
   raf = 0;
@@ -221,6 +318,7 @@ function startSource() {
     sourceNode.start(0);
   } catch (err) {
     console.warn("BufferSource start failed:", err);
+    startFallbackToneLoop();
   }
 }
 
@@ -237,6 +335,53 @@ function stopSource() {
       /* ignore */
     }
     sourceNode = null;
+  }
+}
+
+// ── Oscillator fallback loop (when buffer missing / start failed) ───────────
+let fallbackOsc = null;
+let fallbackGain = null;
+let fallbackTimer = 0;
+
+function startFallbackToneLoop() {
+  stopFallbackTone();
+  const ctx = ensureCtx();
+  if (!ctx || !gainNode) return;
+
+  const pulse = () => {
+    if (!playing) return;
+    playBeep(220, 0.08, 0.45);
+    playBeep(330, 0.05, 0.25);
+    fallbackTimer = window.setTimeout(pulse, 310);
+  };
+  pulse();
+}
+
+function stopFallbackTone() {
+  if (fallbackTimer) {
+    clearTimeout(fallbackTimer);
+    fallbackTimer = 0;
+  }
+  if (fallbackOsc) {
+    try {
+      fallbackOsc.stop();
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      fallbackOsc.disconnect();
+    } catch (_) {
+      /* ignore */
+    }
+    fallbackOsc = null;
+  }
+  if (fallbackGain) {
+    try {
+      fallbackGain.disconnect();
+    } catch (_) {
+      /* ignore */
+    }
+    fallbackGain = null;
   }
 }
 
