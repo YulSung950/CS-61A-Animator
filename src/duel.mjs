@@ -18,7 +18,7 @@ let mode = "ai"; // "ai" | "hotseat"
 let track = null; // { nodes, edges, adj, startNode, endNode }
 let player = null;
 let opponent = null;
-let status = "idle"; // idle | playing | crashed | won
+let status = "idle"; // idle | playing | crashed | player_win | opponent_win
 let sparks = [];
 let keys = Object.create(null);
 let statusCallback = null;
@@ -72,7 +72,16 @@ function statusLabel() {
   if (!enabled) return "";
   if (!track) return "Draw a path first";
   if (status === "crashed") return "CRASH — Space to rematch";
-  if (status === "won") return "Clear! Space to rematch";
+  if (status === "player_win") {
+    return mode === "hotseat"
+      ? "P1 WINS — Space to rematch"
+      : "YOU WIN — Space to rematch";
+  }
+  if (status === "opponent_win") {
+    return mode === "hotseat"
+      ? "P2 WINS — Space to rematch"
+      : "AI WINS — Space to rematch";
+  }
   if (mode === "hotseat") {
     return "PvP · WASD vs Arrows · Space rematch";
   }
@@ -100,7 +109,12 @@ function onKeyDown(e) {
   keys[e.key] = true;
   if (e.key === " " || e.code === "Space") {
     e.preventDefault();
-    if (status === "crashed" || status === "won" || status === "playing") {
+    if (
+      status === "crashed" ||
+      status === "player_win" ||
+      status === "opponent_win" ||
+      status === "playing"
+    ) {
       restartRound();
     }
   }
@@ -245,7 +259,10 @@ export function tick(dt) {
     spawnSparks([(px + ox) / 2, (py + oy) / 2]);
     notifyStatus();
   } else if (reachedGoal(player, track.endNode)) {
-    status = "won";
+    status = "player_win";
+    notifyStatus();
+  } else if (reachedGoal(opponent, track.startNode)) {
+    status = "opponent_win";
     notifyStatus();
   }
 
@@ -333,30 +350,12 @@ function stepRider(rider, controls, dt, speed) {
 }
 
 function chooseBranch(node, fromEdge, facing, controls) {
-  const edge = track.edges[fromEdge];
-  // Incoming heading (direction we were traveling as we arrived).
-  const inDx = facing > 0 ? edge.dx / edge.len : -edge.dx / edge.len;
-  const inDy = facing > 0 ? edge.dy / edge.len : -edge.dy / edge.len;
-
-  const options = track.adj[node].filter((link) => link.edge !== fromEdge);
-  if (options.length === 0) {
+  const ranked = rankBranches(node, fromEdge, facing);
+  if (!ranked) return null;
+  if (ranked.length === 0) {
     // Only way back is the edge we came from — U-turn.
-    const back = track.adj[node].find((link) => link.edge === fromEdge);
-    return back || null;
+    return track.adj[node].find((link) => link.edge === fromEdge) || null;
   }
-
-  // Rank by signed turn: positive cross = screen-right relative to heading.
-  const ranked = options
-    .map((link) => {
-      const cross = inDx * link.outwardDy - inDy * link.outwardDx;
-      const dot = inDx * link.outwardDx + inDy * link.outwardDy;
-      return { link, cross, dot };
-    })
-    .sort((a, b) => {
-      // Prefer rightmost (higher cross); tie-break by most forward (higher dot).
-      if (Math.abs(b.cross - a.cross) > 1e-9) return b.cross - a.cross;
-      return b.dot - a.dot;
-    });
 
   if (controls.left && !controls.right) {
     // Furthest-left = reverse of rightmost ranking.
@@ -369,6 +368,35 @@ function chooseBranch(node, fromEdge, facing, controls) {
   return ranked[0].link;
 }
 
+/** Rank outgoing links by screen-right turn (desc), then forward (desc). */
+function rankBranches(node, fromEdge, facing) {
+  const edge = track.edges[fromEdge];
+  if (!edge) return null;
+  // Incoming heading (direction we were traveling as we arrived).
+  const inDx = facing > 0 ? edge.dx / edge.len : -edge.dx / edge.len;
+  const inDy = facing > 0 ? edge.dy / edge.len : -edge.dy / edge.len;
+
+  const options = track.adj[node].filter((link) => link.edge !== fromEdge);
+  return options
+    .map((link) => {
+      const cross = inDx * link.outwardDy - inDy * link.outwardDx;
+      const dot = inDx * link.outwardDx + inDy * link.outwardDy;
+      return { link, cross, dot };
+    })
+    .sort((a, b) => {
+      // Prefer rightmost (higher cross); tie-break by most forward (higher dot).
+      if (Math.abs(b.cross - a.cross) > 1e-9) return b.cross - a.cross;
+      return b.dot - a.dot;
+    });
+}
+
+/**
+ * AI advances along its current facing (no mid-edge Euclidean flip — that
+ * trapped riders on tree leaves where a tip looked closer than its parent).
+ * It races toward startNode (mirror-duel goal). At junctions it picks the
+ * exit that reduces BFS distance to start; ties fall back to furthest-right.
+ * Speed still reacts to the gap to the player.
+ */
 function stepAi(rider, target, dt) {
   if (!rider || !target) return;
   const [tx, ty] = riderPos(target);
@@ -376,16 +404,9 @@ function stepAi(rider, target, dt) {
   const gap = Math.hypot(tx - rx, ty - ry);
   const speed = AI_BASE + AI_REACT * Math.max(0, 1 - gap / 500);
 
-  // Face the neighbor that gets closest to the player, then advance.
-  const edge = track.edges[rider.edge];
-  const nodeA = edge.a;
-  const nodeB = edge.b;
-  // Decide which endpoint is closer to the player; face that way.
-  const dA = Math.hypot(track.nodes[nodeA].x - tx, track.nodes[nodeA].y - ty);
-  const dB = Math.hypot(track.nodes[nodeB].x - tx, track.nodes[nodeB].y - ty);
-  rider.facing = dB <= dA ? 1 : -1;
-
-  // At junctions, AI picks the exit whose tip is closest to the player.
+  // Race toward the player's starting terminus, not the player's live tip
+  // (Euclidean-to-player facing was what stuck the AI on tree leaves).
+  const goals = new Set([track.startNode]);
   let remaining = speed * dt;
   let guard = 0;
   while (remaining > 1e-6 && guard++ < 8) {
@@ -401,25 +422,7 @@ function stepAi(rider, target, dt) {
     remaining -= distToEnd;
     const node = travelingToB ? e.b : e.a;
     rider.t = travelingToB ? 1 : 0;
-    const options = track.adj[node].filter((link) => link.edge !== rider.edge);
-    let pick =
-      options.length === 0
-        ? track.adj[node].find((link) => link.edge === rider.edge)
-        : null;
-    if (!pick && options.length) {
-      let best = options[0];
-      let bestD = Infinity;
-      for (const link of options) {
-        const nx = track.nodes[link.to].x;
-        const ny = track.nodes[link.to].y;
-        const d = Math.hypot(nx - tx, ny - ty);
-        if (d < bestD) {
-          bestD = d;
-          best = link;
-        }
-      }
-      pick = best;
-    }
+    const pick = chooseAiBranch(node, rider.edge, rider.facing, goals);
     if (!pick) {
       remaining = 0;
       break;
@@ -429,6 +432,56 @@ function stepAi(rider, target, dt) {
     rider.facing = pick.to === nEdge.b ? 1 : -1;
     rider.t = rider.facing > 0 ? 0 : 1;
   }
+}
+
+/** BFS hop-distance from `from` to any node in `goals` (Infinity if none). */
+function bfsDist(from, goals) {
+  if (goals.has(from)) return 0;
+  const seen = new Uint8Array(track.nodes.length);
+  seen[from] = 1;
+  const queue = [from];
+  let head = 0;
+  let dist = 0;
+  while (head < queue.length) {
+    const size = queue.length - head;
+    dist += 1;
+    for (let i = 0; i < size; i++) {
+      const n = queue[head++];
+      for (const link of track.adj[n]) {
+        if (seen[link.to]) continue;
+        if (goals.has(link.to)) return dist;
+        seen[link.to] = 1;
+        queue.push(link.to);
+      }
+    }
+  }
+  return Infinity;
+}
+
+function chooseAiBranch(node, fromEdge, facing, goals) {
+  const ranked = rankBranches(node, fromEdge, facing);
+  if (!ranked) return null;
+  if (ranked.length === 0) {
+    return track.adj[node].find((link) => link.edge === fromEdge) || null;
+  }
+
+  let bestDist = Infinity;
+  const contenders = [];
+  for (const item of ranked) {
+    const d = bfsDist(item.link.to, goals);
+    if (d < bestDist) {
+      bestDist = d;
+      contenders.length = 0;
+      contenders.push(item);
+    } else if (d === bestDist) {
+      contenders.push(item);
+    }
+  }
+
+  // Among shortest graph paths, keep furthest-right (already sorted that way).
+  if (contenders.length) return contenders[0].link;
+  // Fallback: furthest-right outgoing path.
+  return ranked[0].link;
 }
 
 function riderPos(rider) {
@@ -503,6 +556,42 @@ export function draw(ctx) {
     ctx.arc(s.x, s.y, 4 + 6 * a, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  if (
+    status === "crashed" ||
+    status === "player_win" ||
+    status === "opponent_win"
+  ) {
+    drawResultBanner(ctx);
+  }
+}
+
+function drawResultBanner(ctx) {
+  const label = statusLabel().split(" — ")[0] || statusLabel();
+  ctx.save();
+  // Canvas is in world space (origin center). Draw a readable screen-space banner.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+  const bannerH = Math.max(48, Math.round(h * 0.12));
+  const y = h * 0.18;
+  ctx.fillStyle = "rgba(8, 12, 24, 0.78)";
+  ctx.fillRect(0, y - bannerH / 2, w, bannerH);
+
+  let color = "#ffd080";
+  if (status === "player_win") color = "#7dffb0";
+  else if (status === "opponent_win") color = "#ff8a8a";
+  else if (status === "crashed") color = "#ffc078";
+
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "rgba(0,0,0,0.55)";
+  ctx.lineWidth = Math.max(2, Math.round(h * 0.006));
+  ctx.font = `bold ${Math.max(28, Math.round(h * 0.07))}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.strokeText(label, w / 2, y);
+  ctx.fillText(label, w / 2, y);
+  ctx.restore();
 }
 
 function drawRider(ctx, x, y, tx, ty, fill, glow) {

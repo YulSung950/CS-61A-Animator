@@ -45,8 +45,9 @@ export function wireMusicCallbacks(onBass, onPulse) {
 }
 
 export function toggleMusic() {
-  // Fire-and-forget: AudioContext resume is async inside music.toggle.
-  music.toggle();
+  // Fire-and-forget: AudioContext is created/resumed inside music.toggle on
+  // this Play click (user gesture) so autoplay policies allow audible output.
+  return music.toggle();
 }
 
 export function pauseMusic() {
@@ -54,6 +55,7 @@ export function pauseMusic() {
 }
 
 export function useBuiltinMusic() {
+  // Lazy: marks builtin preference without creating AudioContext until Play.
   music.useBuiltin();
 }
 

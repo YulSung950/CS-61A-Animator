@@ -1,6 +1,9 @@
 // Music sync: Web Audio play/pause of a short built-in loop or a user file.
- // AnalyserNode energy pulses stroke brightness and set_speed; optional bass
- // band drives the shape slider via a Gleam callback.
+// AnalyserNode energy pulses stroke brightness and set_speed; optional bass
+// band drives the shape slider via a Gleam callback.
+//
+// AudioContext is created lazily on the Play click (user gesture) so browsers
+// allow audible output; we also resume() before every start.
 
 import { setSpeed, setStrokeBrightness } from "./canvas.mjs";
 
@@ -18,6 +21,7 @@ let lastBeat = 0;
 let onBass = null;
 let onPulse = null;
 let usingBuiltin = true;
+let unlockArmed = false;
 
 const BUILTIN_BPM = 96;
 
@@ -42,24 +46,61 @@ export function isPlaying() {
   return playing;
 }
 
+/** Create the Web Audio graph on first use (should be during a user gesture). */
 function ensureCtx() {
   if (!audioCtx) {
     const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) {
+      console.error("Web Audio API is not available in this browser.");
+      return null;
+    }
     audioCtx = new Ctx();
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.7;
     gainNode = audioCtx.createGain();
-    gainNode.gain.value = 0.7;
+    // Audible but not clipping; browser autoplay policies mute until resume.
+    gainNode.gain.value = 0.85;
     gainNode.connect(analyser);
     analyser.connect(audioCtx.destination);
+    armGestureUnlock();
   }
   return audioCtx;
 }
 
-/** Procedural 2-bar kick/hat loop as an AudioBuffer (no external asset). */
+/** Resume a suspended AudioContext from a subsequent user gesture if needed. */
+function armGestureUnlock() {
+  if (unlockArmed || typeof window === "undefined") return;
+  unlockArmed = true;
+  const unlock = () => {
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume().catch(() => {});
+    }
+  };
+  window.addEventListener("pointerdown", unlock, { capture: true });
+  window.addEventListener("keydown", unlock, { capture: true });
+}
+
+async function resumeCtx() {
+  const ctx = ensureCtx();
+  if (!ctx) return null;
+  if (ctx.state === "suspended") {
+    try {
+      await ctx.resume();
+    } catch (err) {
+      console.warn("AudioContext resume failed:", err);
+    }
+  }
+  return ctx;
+}
+
+/**
+ * Procedural 2-bar kick/hat loop as an AudioBuffer (no external asset).
+ * Only builds once we have a live AudioContext (sampleRate from the device).
+ */
 async function ensureBuiltinBuffer() {
   const ctx = ensureCtx();
+  if (!ctx) return null;
   if (buffer && usingBuiltin) return buffer;
   const bpm = BUILTIN_BPM;
   const beats = 8;
@@ -77,21 +118,21 @@ async function ensureBuiltinBuffer() {
       const t = i / rate;
       const env = Math.exp(-t * 18);
       const freq = 120 * Math.exp(-t * 10);
-      ch[t0 + i] += env * Math.sin(2 * Math.PI * freq * t) * 0.9;
+      ch[t0 + i] += env * Math.sin(2 * Math.PI * freq * t) * 0.95;
     }
     // Hat on off-beats
     if (b % 2 === 1) {
       for (let i = 0; i < rate * 0.05; i++) {
         const t = i / rate;
         const env = Math.exp(-t * 60);
-        ch[t0 + i] += env * (Math.random() * 2 - 1) * 0.25;
+        ch[t0 + i] += env * (Math.random() * 2 - 1) * 0.3;
       }
     }
     // Soft mid tone every 4 beats
     if (b % 4 === 0) {
       for (let i = 0; i < rate * 0.35; i++) {
         const t = i / rate;
-        const env = Math.exp(-t * 4) * 0.35;
+        const env = Math.exp(-t * 4) * 0.4;
         ch[t0 + i] += env * Math.sin(2 * Math.PI * 220 * t);
       }
     }
@@ -106,7 +147,8 @@ async function ensureBuiltinBuffer() {
 }
 
 export async function loadUserFile(file) {
-  const ctx = ensureCtx();
+  const ctx = await resumeCtx();
+  if (!ctx) return;
   const arr = await file.arrayBuffer();
   buffer = await ctx.decodeAudioData(arr.slice(0));
   usingBuiltin = false;
@@ -117,13 +159,23 @@ export async function loadUserFile(file) {
 }
 
 export async function play() {
-  const ctx = ensureCtx();
-  if (ctx.state === "suspended") await ctx.resume();
+  const ctx = await resumeCtx();
+  if (!ctx) return false;
   if (!buffer) await ensureBuiltinBuffer();
+  if (!buffer) return false;
+  // Resume again right before start — some browsers re-suspend between awaits.
+  if (ctx.state === "suspended") {
+    try {
+      await ctx.resume();
+    } catch (_) {
+      /* ignore */
+    }
+  }
   stopSource();
   startSource();
   playing = true;
   loopAnalyse();
+  return true;
 }
 
 export function pause() {
@@ -136,28 +188,40 @@ export function pause() {
 }
 
 export async function toggle() {
-  if (playing) pause();
-  else await play();
-  return playing;
+  if (playing) {
+    pause();
+    return false;
+  }
+  return await play();
 }
 
+/** Prefetch the built-in loop without forcing playback. Safe before a gesture. */
 export async function useBuiltin() {
   usingBuiltin = true;
   buffer = null;
-  await ensureBuiltinBuffer();
-  if (playing) {
-    stopSource();
-    startSource();
+  // Defer AudioContext creation until Play — only mark that we want the builtin.
+  // If a context already exists (user already pressed Play once), rebuild now.
+  if (audioCtx) {
+    await ensureBuiltinBuffer();
+    if (playing) {
+      stopSource();
+      startSource();
+    }
   }
 }
 
 function startSource() {
   const ctx = ensureCtx();
+  if (!ctx || !buffer || !gainNode) return;
   sourceNode = ctx.createBufferSource();
   sourceNode.buffer = buffer;
   sourceNode.loop = true;
   sourceNode.connect(gainNode);
-  sourceNode.start(0);
+  try {
+    sourceNode.start(0);
+  } catch (err) {
+    console.warn("BufferSource start failed:", err);
+  }
 }
 
 function stopSource() {
