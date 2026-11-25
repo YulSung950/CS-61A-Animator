@@ -45,8 +45,8 @@ export function wireMusicCallbacks(onBass, onPulse) {
 }
 
 export function toggleMusic() {
-  // Fire-and-forget: AudioContext is created/resumed inside music.toggle on
-  // this Play click (user gesture) so autoplay policies allow audible output.
+  // Play/pause: unlock should already have run in capture-phase on the button.
+  // Still call toggle here from the Lustre effect for state + buffer loop.
   return music.toggle();
 }
 
@@ -57,6 +57,14 @@ export function pauseMusic() {
 export function useBuiltinMusic() {
   // Lazy: marks builtin preference without creating AudioContext until Play.
   music.useBuiltin();
+}
+
+/**
+ * Capture-phase unlock on the Music Play button so AudioContext resume happens
+ * inside the real user gesture (Lustre effects run after the gesture ends).
+ */
+export function bindMusicPlayGesture() {
+  music.bindPlayGesture("music-toggle");
 }
 
 /** Document-level change listener so Lustre re-renders keep the file picker working. */

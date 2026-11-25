@@ -155,6 +155,9 @@ fn use_builtin_music_js() -> Nil
 @external(javascript, "./app_ffi.mjs", "bindMusicFileInput")
 fn bind_music_file_input(id: String) -> Nil
 
+@external(javascript, "./app_ffi.mjs", "bindMusicPlayGesture")
+fn bind_music_play_gesture() -> Nil
+
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 pub fn init(_flags: Nil) -> #(Model, Effect(Msg)) {
@@ -206,6 +209,8 @@ fn wire_extensions() -> Effect(Msg) {
       fn(_) { Nil },
     )
     bind_music_file_input("music-file")
+    // Unlock AudioContext on the Play click itself (capture), before Lustre effects.
+    bind_music_play_gesture()
     use_builtin_music_js()
   })
 }

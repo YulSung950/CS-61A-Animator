@@ -3,6 +3,8 @@
 // only — no momentum. Branches use A/D or ←/→ (default: furthest-right).
 // vs AI: WASD or arrows steer the player. Hot-seat / PvP: WASD = player 1,
 // arrow keys = player 2.
+// Win: catch the opponent from behind (reach their trailing side). Head-on
+// contact is a CRASH. Winner banners stay on canvas + HUD.
 
 import { setDuelHooks } from "./canvas.mjs";
 
@@ -254,16 +256,25 @@ export function tick(dt) {
 
   const [px, py] = riderPos(player);
   const [ox, oy] = riderPos(opponent);
-  if (Math.hypot(px - ox, py - oy) <= COLLISION_EPS) {
-    status = "crashed";
-    spawnSparks([(px + ox) / 2, (py + oy) / 2]);
-    notifyStatus();
-  } else if (reachedGoal(player, track.endNode)) {
-    status = "player_win";
-    notifyStatus();
-  } else if (reachedGoal(opponent, track.startNode)) {
-    status = "opponent_win";
-    notifyStatus();
+  const dist = Math.hypot(px - ox, py - oy);
+  if (dist <= COLLISION_EPS) {
+    // Behind = on the target's trailing side of the path (opposite their facing).
+    const playerBehindOpp = isOnTrailingSide(player, opponent);
+    const oppBehindPlayer = isOnTrailingSide(opponent, player);
+    if (playerBehindOpp && !oppBehindPlayer) {
+      status = "player_win";
+      spawnSparks([(px + ox) / 2, (py + oy) / 2]);
+      notifyStatus();
+    } else if (oppBehindPlayer && !playerBehindOpp) {
+      status = "opponent_win";
+      spawnSparks([(px + ox) / 2, (py + oy) / 2]);
+      notifyStatus();
+    } else {
+      // Head-on (or ambiguous) contact → crash.
+      status = "crashed";
+      spawnSparks([(px + ox) / 2, (py + oy) / 2]);
+      notifyStatus();
+    }
   }
 
   ageSparks(dt);
@@ -501,14 +512,26 @@ function riderTangent(rider) {
   return [(e.dx / len) * rider.facing, (e.dy / len) * rider.facing];
 }
 
-function reachedGoal(rider, goalNode) {
-  if (!rider || !track) return false;
-  const e = track.edges[rider.edge];
-  const atA = rider.t <= 0.02;
-  const atB = rider.t >= 0.98;
-  if (atA && e.a === goalNode) return true;
-  if (atB && e.b === goalNode) return true;
-  return false;
+/**
+ * True when `chaser` is on `target`'s trailing side: the vector from target to
+ * chaser points opposite the target's facing tangent (caught from behind).
+ */
+function isOnTrailingSide(chaser, target) {
+  if (!chaser || !target) return false;
+  const [cx, cy] = riderPos(chaser);
+  const [tx, ty] = riderPos(target);
+  const [fx, fy] = riderTangent(target);
+  const dx = cx - tx;
+  const dy = cy - ty;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return false;
+  // Normalize facing; treat near-zero facing as not trailing.
+  const fl = Math.hypot(fx, fy);
+  if (fl < 1e-6) return false;
+  const nx = fx / fl;
+  const ny = fy / fl;
+  // Dot < 0 ⇒ chaser sits behind target along facing.
+  return (dx / len) * nx + (dy / len) * ny < -0.15;
 }
 
 function spawnSparks(origin) {
