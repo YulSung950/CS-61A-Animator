@@ -1,26 +1,23 @@
 // Mirror duel: two riders race toward each other on the current drawing's
- // path (player forward from the start, opponent backward from the end).
- // Collision sparks and ends the round. Default opponent is a simple AI;
- // hot-seat mode lets a second keyboard player control the mirror rider.
+// path graph (player from the start, opponent from the end). Hold-to-move
+// only — no momentum. Branches use A/D or ←/→ (default: furthest-right).
+// vs AI: WASD or arrows steer the player. Hot-seat / PvP: WASD = player 1,
+// arrow keys = player 2.
 
 import { setDuelHooks } from "./canvas.mjs";
 
-const COLLISION_EPS = 0.028;
-const PLAYER_ACCEL = 1.6;
-const PLAYER_DRAG = 2.2;
-const PLAYER_MAX = 0.55;
-const AI_BASE = 0.18;
-const AI_REACT = 0.12;
-const HOTSEAT_ACCEL = 1.6;
+const COLLISION_EPS = 18; // world units
+const MOVE_SPEED = 220; // world units / second while a move key is held
+const AI_BASE = 90;
+const AI_REACT = 70;
 const SPARK_LIFE = 0.9;
+const NODE_EPS = 1.5; // merge nearby vertices into one junction
 
 let enabled = false;
 let mode = "ai"; // "ai" | "hotseat"
-let track = null; // { pts: Float64Array [x,y,...], cum: Float64Array lengths, total }
-let playerS = 0;
-let opponentS = 1;
-let playerV = 0;
-let opponentV = 0;
+let track = null; // { nodes, edges, adj, startNode, endNode }
+let player = null;
+let opponent = null;
 let status = "idle"; // idle | playing | crashed | won
 let sparks = [];
 let keys = Object.create(null);
@@ -53,15 +50,15 @@ export function onStatus(cb) {
 }
 
 export function restartRound() {
-  if (!track || track.total <= 0) {
+  if (!track || track.edges.length === 0) {
+    player = null;
+    opponent = null;
     status = "idle";
     notifyStatus();
     return;
   }
-  playerS = 0.02;
-  opponentS = 0.98;
-  playerV = 0;
-  opponentV = 0;
+  player = placeRider(track.startNode, /*towardEnd=*/ true);
+  opponent = placeRider(track.endNode, /*towardEnd=*/ false);
   sparks = [];
   status = "playing";
   notifyStatus();
@@ -76,8 +73,10 @@ function statusLabel() {
   if (!track) return "Draw a path first";
   if (status === "crashed") return "CRASH — Space to rematch";
   if (status === "won") return "Clear! Space to rematch";
-  if (mode === "hotseat") return "Hot-seat · A/D vs J/L · Space rematch";
-  return "Mirror duel · A/D or ←/→ · Space rematch";
+  if (mode === "hotseat") {
+    return "PvP · WASD vs Arrows · Space rematch";
+  }
+  return "Mirror duel · WASD or Arrows · Space rematch";
 }
 
 function ensureKeys() {
@@ -85,6 +84,11 @@ function ensureKeys() {
   listening = true;
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", clearKeys);
+}
+
+function clearKeys() {
+  keys = Object.create(null);
 }
 
 function onKeyDown(e) {
@@ -100,6 +104,15 @@ function onKeyDown(e) {
       restartRound();
     }
   }
+  // Prevent page scroll while steering with arrows.
+  if (
+    e.key === "ArrowUp" ||
+    e.key === "ArrowDown" ||
+    e.key === "ArrowLeft" ||
+    e.key === "ArrowRight"
+  ) {
+    e.preventDefault();
+  }
 }
 
 function onKeyUp(e) {
@@ -110,86 +123,128 @@ function keyDown(name) {
   return !!keys[name];
 }
 
-/** Build an arc-length track from the canvas path list (after setDrawing). */
+/** Build a junction graph from the canvas path list (after setDrawing). */
 export function onDrawing(paths) {
-  const flat = [];
-  for (const p of paths) {
-    const pts = p.pts;
-    for (let i = 0; i < pts.length; i += 2) {
-      const x = pts[i];
-      const y = pts[i + 1];
-      const n = flat.length;
-      if (n >= 2) {
-        const dx = x - flat[n - 2];
-        const dy = y - flat[n - 1];
-        // Skip duplicate vertices when segments already share an endpoint.
-        if (dx * dx + dy * dy < 1e-6) continue;
-      }
-      flat.push(x, y);
-    }
-  }
-  if (flat.length < 4) {
-    track = null;
-    if (enabled) {
-      status = "idle";
-      notifyStatus();
-    }
-    return;
-  }
-  const pts = new Float64Array(flat);
-  const segCount = pts.length / 2 - 1;
-  const cum = new Float64Array(segCount + 1);
-  let total = 0;
-  for (let i = 0; i < segCount; i++) {
-    const ax = pts[2 * i];
-    const ay = pts[2 * i + 1];
-    const bx = pts[2 * i + 2];
-    const by = pts[2 * i + 3];
-    total += Math.hypot(bx - ax, by - ay);
-    cum[i + 1] = total;
-  }
-  track = { pts, cum, total };
+  track = buildTrack(paths);
   if (enabled) restartRound();
   else notifyStatus();
 }
 
+function buildTrack(paths) {
+  const nodes = []; // {x,y}
+  const edges = []; // {a,b,len,dx,dy}
+  const adj = []; // node -> [{edge, to, outwardDx, outwardDy}]
+
+  function quantize(x, y) {
+    return [Math.round(x / NODE_EPS) * NODE_EPS, Math.round(y / NODE_EPS) * NODE_EPS];
+  }
+
+  function findOrAddNode(x, y) {
+    const [qx, qy] = quantize(x, y);
+    for (let i = 0; i < nodes.length; i++) {
+      if (Math.hypot(nodes[i].x - qx, nodes[i].y - qy) <= NODE_EPS) return i;
+    }
+    const id = nodes.length;
+    nodes.push({ x: qx, y: qy });
+    adj.push([]);
+    return id;
+  }
+
+  function addEdge(a, b) {
+    if (a === b) return;
+    // Skip duplicate undirected edges.
+    for (const link of adj[a]) {
+      if (link.to === b) return;
+    }
+    const ax = nodes[a].x;
+    const ay = nodes[a].y;
+    const bx = nodes[b].x;
+    const by = nodes[b].y;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return;
+    const id = edges.length;
+    edges.push({ a, b, len, dx, dy });
+    adj[a].push({ edge: id, to: b, outwardDx: dx / len, outwardDy: dy / len });
+    adj[b].push({ edge: id, to: a, outwardDx: -dx / len, outwardDy: -dy / len });
+  }
+
+  let startNode = -1;
+  let endNode = -1;
+  for (const p of paths) {
+    const pts = p.pts;
+    if (!pts || pts.length < 4) continue;
+    let prev = -1;
+    for (let i = 0; i < pts.length; i += 2) {
+      const n = findOrAddNode(pts[i], pts[i + 1]);
+      if (startNode < 0) startNode = n;
+      endNode = n;
+      if (prev >= 0) addEdge(prev, n);
+      prev = n;
+    }
+  }
+
+  if (edges.length === 0 || startNode < 0) return null;
+  return { nodes, edges, adj, startNode, endNode };
+}
+
+/** Place a rider on an edge leaving `node`, facing toward/away from the end. */
+function placeRider(node, towardEnd) {
+  const links = track.adj[node];
+  if (!links.length) return null;
+  // Prefer the link that points closest to (or away from) the opposite terminus.
+  const target = towardEnd ? track.endNode : track.startNode;
+  const tx = track.nodes[target].x - track.nodes[node].x;
+  const ty = track.nodes[target].y - track.nodes[node].y;
+  let best = links[0];
+  let bestDot = -Infinity;
+  for (const link of links) {
+    const dot = link.outwardDx * tx + link.outwardDy * ty;
+    if (dot > bestDot) {
+      bestDot = dot;
+      best = link;
+    }
+  }
+  const edge = track.edges[best.edge];
+  const forward = best.to === edge.b; // traveling a→b
+  return {
+    edge: best.edge,
+    t: forward ? 0 : 1, // progress along edge a→b
+    // facing: +1 toward b, -1 toward a (direction of travel / sprite).
+    facing: forward ? 1 : -1,
+    // True while Back is held after the one-shot turnaround on press.
+    reversing: false,
+  };
+}
+
 export function tick(dt) {
-  if (!enabled || !track || status !== "playing") {
+  if (!enabled || !track || status !== "playing" || !player || !opponent) {
     ageSparks(dt);
     return;
   }
 
-  // Player: A/D or arrows accelerate along the path (forward = increasing s).
-  let input = 0;
-  if (keyDown("ArrowRight") || keyDown("d") || keyDown("D")) input += 1;
-  if (keyDown("ArrowLeft") || keyDown("a") || keyDown("A")) input -= 1;
-  playerV += input * PLAYER_ACCEL * dt;
-  playerV -= playerV * PLAYER_DRAG * dt;
-  playerV = clamp(playerV, -PLAYER_MAX, PLAYER_MAX);
-  playerS = clamp(playerS + playerV * dt, 0, 1);
+  const pControls = readControls("wasd");
+  const arrowControls = readControls("arrows");
 
   if (mode === "hotseat") {
-    let oppIn = 0;
-    // Mirror rider faces backward: J pulls toward the start (decreasing s), L away.
-    if (keyDown("j") || keyDown("J")) oppIn -= 1;
-    if (keyDown("l") || keyDown("L")) oppIn += 1;
-    opponentV += oppIn * HOTSEAT_ACCEL * dt;
-    opponentV -= opponentV * PLAYER_DRAG * dt;
-    opponentV = clamp(opponentV, -PLAYER_MAX, PLAYER_MAX);
-    opponentS = clamp(opponentS + opponentV * dt, 0, 1);
+    // PvP: WASD steers player 1 only; arrows steers player 2 only.
+    stepRider(player, pControls, dt, MOVE_SPEED);
+    stepRider(opponent, arrowControls, dt, MOVE_SPEED);
   } else {
-    // AI rides backward toward the player, speeding up as the gap closes.
-    const gap = opponentS - playerS;
-    const speed = AI_BASE + AI_REACT * Math.max(0, 1 - gap);
-    opponentS = clamp(opponentS - speed * dt, 0, 1);
+    // vs AI: either scheme steers the player; arrows win if both pressed.
+    const merged = mergeControls(pControls, arrowControls);
+    stepRider(player, merged, dt, MOVE_SPEED);
+    stepAi(opponent, player, dt);
   }
 
-  if (opponentS - playerS <= COLLISION_EPS) {
+  const [px, py] = riderPos(player);
+  const [ox, oy] = riderPos(opponent);
+  if (Math.hypot(px - ox, py - oy) <= COLLISION_EPS) {
     status = "crashed";
-    spawnSparks(midpoint());
+    spawnSparks([(px + ox) / 2, (py + oy) / 2]);
     notifyStatus();
-  } else if (playerS >= 0.97 && opponentS > playerS + COLLISION_EPS) {
-    // Reached the far end without colliding — rare, but counts as a clear.
+  } else if (reachedGoal(player, track.endNode)) {
     status = "won";
     notifyStatus();
   }
@@ -197,9 +252,210 @@ export function tick(dt) {
   ageSparks(dt);
 }
 
-function midpoint() {
-  const s = (playerS + opponentS) / 2;
-  return sample(s);
+function readControls(scheme) {
+  if (scheme === "wasd") {
+    return {
+      forward: keyDown("w") || keyDown("W"),
+      back: keyDown("s") || keyDown("S"),
+      left: keyDown("a") || keyDown("A"),
+      right: keyDown("d") || keyDown("D"),
+    };
+  }
+  return {
+    forward: keyDown("ArrowUp"),
+    back: keyDown("ArrowDown"),
+    left: keyDown("ArrowLeft"),
+    right: keyDown("ArrowRight"),
+  };
+}
+
+function mergeControls(a, b) {
+  return {
+    forward: a.forward || b.forward,
+    back: a.back || b.back,
+    left: a.left || b.left,
+    right: a.right || b.right,
+  };
+}
+
+/**
+ * Hold-to-move along the current edge; stop instantly on release (no coast).
+ * Forward moves along `facing`. Back turns around once on press, then moves
+ * along the new facing while held (no per-frame flip / no momentum).
+ * At junctions, Left/Right pick a branch; default is furthest-right.
+ */
+function stepRider(rider, controls, dt, speed) {
+  if (!rider) return;
+
+  const wantBack = controls.back && !controls.forward;
+  const wantFwd = controls.forward && !controls.back;
+
+  if (wantBack) {
+    if (!rider.reversing) {
+      rider.facing *= -1;
+      rider.reversing = true;
+    }
+  } else {
+    rider.reversing = false;
+  }
+
+  if (!wantBack && !wantFwd) return; // released → stop immediately
+
+  let travel = rider.facing; // +1 toward b, -1 toward a
+  let remaining = speed * dt;
+  let guard = 0;
+  while (remaining > 1e-6 && guard++ < 8) {
+    const edge = track.edges[rider.edge];
+    const travelingToB = travel > 0;
+    const distToEnd = travelingToB ? (1 - rider.t) * edge.len : rider.t * edge.len;
+
+    if (remaining < distToEnd) {
+      const dtFrac = remaining / edge.len;
+      rider.t += travelingToB ? dtFrac : -dtFrac;
+      remaining = 0;
+      break;
+    }
+
+    remaining -= distToEnd;
+    const node = travelingToB ? edge.b : edge.a;
+    rider.t = travelingToB ? 1 : 0;
+    const next = chooseBranch(node, rider.edge, travel, controls);
+    if (!next) {
+      remaining = 0;
+      break;
+    }
+    rider.edge = next.edge;
+    const nEdge = track.edges[next.edge];
+    travel = next.to === nEdge.b ? 1 : -1;
+    rider.facing = travel;
+    rider.t = travel > 0 ? 0 : 1;
+  }
+}
+
+function chooseBranch(node, fromEdge, facing, controls) {
+  const edge = track.edges[fromEdge];
+  // Incoming heading (direction we were traveling as we arrived).
+  const inDx = facing > 0 ? edge.dx / edge.len : -edge.dx / edge.len;
+  const inDy = facing > 0 ? edge.dy / edge.len : -edge.dy / edge.len;
+
+  const options = track.adj[node].filter((link) => link.edge !== fromEdge);
+  if (options.length === 0) {
+    // Only way back is the edge we came from — U-turn.
+    const back = track.adj[node].find((link) => link.edge === fromEdge);
+    return back || null;
+  }
+
+  // Rank by signed turn: positive cross = screen-right relative to heading.
+  const ranked = options
+    .map((link) => {
+      const cross = inDx * link.outwardDy - inDy * link.outwardDx;
+      const dot = inDx * link.outwardDx + inDy * link.outwardDy;
+      return { link, cross, dot };
+    })
+    .sort((a, b) => {
+      // Prefer rightmost (higher cross); tie-break by most forward (higher dot).
+      if (Math.abs(b.cross - a.cross) > 1e-9) return b.cross - a.cross;
+      return b.dot - a.dot;
+    });
+
+  if (controls.left && !controls.right) {
+    // Furthest-left = reverse of rightmost ranking.
+    return ranked[ranked.length - 1].link;
+  }
+  if (controls.right && !controls.left) {
+    return ranked[0].link;
+  }
+  // Default: furthest-right path.
+  return ranked[0].link;
+}
+
+function stepAi(rider, target, dt) {
+  if (!rider || !target) return;
+  const [tx, ty] = riderPos(target);
+  const [rx, ry] = riderPos(rider);
+  const gap = Math.hypot(tx - rx, ty - ry);
+  const speed = AI_BASE + AI_REACT * Math.max(0, 1 - gap / 500);
+
+  // Face the neighbor that gets closest to the player, then advance.
+  const edge = track.edges[rider.edge];
+  const nodeA = edge.a;
+  const nodeB = edge.b;
+  // Decide which endpoint is closer to the player; face that way.
+  const dA = Math.hypot(track.nodes[nodeA].x - tx, track.nodes[nodeA].y - ty);
+  const dB = Math.hypot(track.nodes[nodeB].x - tx, track.nodes[nodeB].y - ty);
+  rider.facing = dB <= dA ? 1 : -1;
+
+  // At junctions, AI picks the exit whose tip is closest to the player.
+  let remaining = speed * dt;
+  let guard = 0;
+  while (remaining > 1e-6 && guard++ < 8) {
+    const e = track.edges[rider.edge];
+    const travelingToB = rider.facing > 0;
+    const distToEnd = travelingToB ? (1 - rider.t) * e.len : rider.t * e.len;
+    if (remaining < distToEnd) {
+      const dtFrac = remaining / e.len;
+      rider.t += travelingToB ? dtFrac : -dtFrac;
+      remaining = 0;
+      break;
+    }
+    remaining -= distToEnd;
+    const node = travelingToB ? e.b : e.a;
+    rider.t = travelingToB ? 1 : 0;
+    const options = track.adj[node].filter((link) => link.edge !== rider.edge);
+    let pick =
+      options.length === 0
+        ? track.adj[node].find((link) => link.edge === rider.edge)
+        : null;
+    if (!pick && options.length) {
+      let best = options[0];
+      let bestD = Infinity;
+      for (const link of options) {
+        const nx = track.nodes[link.to].x;
+        const ny = track.nodes[link.to].y;
+        const d = Math.hypot(nx - tx, ny - ty);
+        if (d < bestD) {
+          bestD = d;
+          best = link;
+        }
+      }
+      pick = best;
+    }
+    if (!pick) {
+      remaining = 0;
+      break;
+    }
+    rider.edge = pick.edge;
+    const nEdge = track.edges[pick.edge];
+    rider.facing = pick.to === nEdge.b ? 1 : -1;
+    rider.t = rider.facing > 0 ? 0 : 1;
+  }
+}
+
+function riderPos(rider) {
+  if (!rider || !track) return [0, 0];
+  const e = track.edges[rider.edge];
+  const ax = track.nodes[e.a].x;
+  const ay = track.nodes[e.a].y;
+  const bx = track.nodes[e.b].x;
+  const by = track.nodes[e.b].y;
+  return [ax + (bx - ax) * rider.t, ay + (by - ay) * rider.t];
+}
+
+function riderTangent(rider) {
+  if (!rider || !track) return [1, 0];
+  const e = track.edges[rider.edge];
+  const len = e.len || 1;
+  return [(e.dx / len) * rider.facing, (e.dy / len) * rider.facing];
+}
+
+function reachedGoal(rider, goalNode) {
+  if (!rider || !track) return false;
+  const e = track.edges[rider.edge];
+  const atA = rider.t <= 0.02;
+  const atB = rider.t >= 0.98;
+  if (atA && e.a === goalNode) return true;
+  if (atB && e.b === goalNode) return true;
+  return false;
 }
 
 function spawnSparks(origin) {
@@ -229,41 +485,16 @@ function ageSparks(dt) {
   sparks = sparks.filter((s) => s.life > 0);
 }
 
-function sample(s) {
-  if (!track || track.total <= 0) return [0, 0];
-  const target = clamp(s, 0, 1) * track.total;
-  const cum = track.cum;
-  const pts = track.pts;
-  let i = 0;
-  while (i < cum.length - 2 && cum[i + 1] < target) i++;
-  const segLen = cum[i + 1] - cum[i];
-  const t = segLen <= 1e-9 ? 0 : (target - cum[i]) / segLen;
-  const ax = pts[2 * i];
-  const ay = pts[2 * i + 1];
-  const bx = pts[2 * i + 2];
-  const by = pts[2 * i + 3];
-  return [ax + (bx - ax) * t, ay + (by - ay) * t];
-}
-
-function tangent(s) {
-  const a = sample(Math.max(0, s - 0.01));
-  const b = sample(Math.min(1, s + 0.01));
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const len = Math.hypot(dx, dy) || 1;
-  return [dx / len, dy / len];
-}
-
 export function draw(ctx) {
-  if (!enabled || !track) return;
+  if (!enabled || !track || !player || !opponent) return;
 
-  const [px, py] = sample(playerS);
-  const [ox, oy] = sample(opponentS);
-  const [ptx, pty] = tangent(playerS);
-  const [otx, oty] = tangent(opponentS);
+  const [px, py] = riderPos(player);
+  const [ox, oy] = riderPos(opponent);
+  const [ptx, pty] = riderTangent(player);
+  const [otx, oty] = riderTangent(opponent);
 
   drawRider(ctx, px, py, ptx, pty, "#5ec8ff", "#9fffff");
-  drawRider(ctx, ox, oy, -otx, -oty, "#ff6b6b", "#ffd0a0");
+  drawRider(ctx, ox, oy, otx, oty, "#ff6b6b", "#ffd0a0");
 
   for (const s of sparks) {
     const a = Math.max(0, s.life / s.max);
@@ -271,13 +502,6 @@ export function draw(ctx) {
     ctx.fillStyle = `rgba(255, ${Math.floor(180 + 75 * a)}, 80, ${a})`;
     ctx.arc(s.x, s.y, 4 + 6 * a, 0, Math.PI * 2);
     ctx.fill();
-  }
-
-  if (status === "crashed" || status === "won") {
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    // Banner is drawn in screen space by the Gleam HUD; sparks stay in world.
-    ctx.restore();
   }
 }
 
@@ -299,10 +523,6 @@ function drawRider(ctx, x, y, tx, ty, fill, glow) {
   ctx.strokeStyle = glow;
   ctx.lineWidth = 2;
   ctx.stroke();
-}
-
-function clamp(x, lo, hi) {
-  return x < lo ? lo : x > hi ? hi : x;
 }
 
 // Register with the canvas frame loop once this module loads.

@@ -339,7 +339,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       let on = !model.duel_on
       #(
         Model(..model, duel_on: on, duel_status: case on {
-          True -> "Mirror duel · A/D or ←/→ · Space rematch"
+          True -> "Mirror duel · WASD or Arrows · Space rematch"
           False -> ""
         }),
         effect.from(fn(_) {
@@ -647,9 +647,10 @@ fn view_duel_row(model: Model) -> Element(Msg) {
       ),
     ]),
     html.span([attr.class("control-value ext-hint")], [
-      html.text(case model.duel_on {
-        True -> "A/D"
-        False -> ""
+      html.text(case model.duel_on, model.duel_mode {
+        True, Hotseat -> "WASD vs Arrows"
+        True, VsAi -> "WASD/Arrows"
+        False, _ -> ""
       }),
     ]),
   ])

@@ -148,13 +148,37 @@ pub fn seed_from_examples() -> Library {
   library
 }
 
+/// Merge any example drawings missing from a stored library (e.g. new seeds
+/// like `circle_spiral`) so they show up in drawing-select without wiping edits.
+pub fn merge_example_seeds(
+  drawings: List(#(String, String)),
+) -> List(#(String, String)) {
+  list.fold(examples.all, drawings, fn(acc, entry) {
+    let #(name, source) = entry
+    case find_source(acc, name) {
+      Ok(_) -> acc
+      Error(_) -> list.append(acc, [#(name, source)])
+    }
+  })
+}
+
 /// Load the library from localStorage, or seed from examples when missing.
 pub fn load() -> Library {
   case storage_get(library_key) {
     Error(_) -> seed_from_examples()
     Ok(raw) ->
       case decode(raw) {
-        Ok(library) -> library
+        Ok(library) -> {
+          let drawings = merge_example_seeds(library.drawings)
+          case drawings == library.drawings {
+            True -> library
+            False -> {
+              let library = Library(..library, drawings:)
+              persist_now(library_key, encode(library))
+              library
+            }
+          }
+        }
         Error(_) -> seed_from_examples()
       }
   }
