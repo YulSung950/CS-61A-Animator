@@ -280,7 +280,7 @@ const speed_max = 2.0;
  * Your app's public address, once you've deployed it in Problem 13, such as
  * "https://your-username.github.io/animator/".
  */
-export const public_url = "";
+export const public_url = "https://github.com/YulSung950/animator";
 
 /**
  * Set to True if you would like your app's URL included in the course gallery.
@@ -1685,15 +1685,15 @@ export function main() {
       "let_assert",
       FILEPATH,
       "app",
-      824,
+      820,
       "main",
       "Pattern match failed, no pattern matched the value.",
       {
         value: $,
-        start: 25746,
-        end: 25795,
-        pattern_start: 25757,
-        pattern_end: 25762
+        start: 25685,
+        end: 25734,
+        pattern_start: 25696,
+        pattern_end: 25701
       }
     )
   }
